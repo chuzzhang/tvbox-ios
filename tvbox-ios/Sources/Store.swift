@@ -4,12 +4,12 @@ import SwiftUI
 final class AppState: ObservableObject {
 
     @Published var configText: String = UserDefaults.standard.string(forKey: "cfg.url") ?? ""
-    @Published var config: BoxConfig?
+    @Published var config: BoxConfig? = nil
     @Published var loading = false
-    @Published var errorMessage: String?
+    @Published var errorMessage: String? = nil
     /// 详细的失败原文，弹窗关掉后仍留在配置页，方便长按复制
-    @Published var lastErrorDetail: String?
-    @Published var selectedSiteKey: String?
+    @Published var lastErrorDetail: String? = nil
+    @Published var selectedSiteKey: String? = nil
 
     @Published var history: [VItem] = []
     @Published var favorites: [VItem] = []

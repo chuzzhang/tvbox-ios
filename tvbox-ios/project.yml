@@ -19,6 +19,12 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.0"
     ENABLE_BITCODE: NO
+    # 警告不当错误：Xcode 16 的并发/弃用提示很多，不该阻断出包
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: NO
+    GCC_TREAT_WARNINGS_AS_ERRORS: NO
+    # Swift 6 的严格并发检查会把 AVPlayer/JSContext 这类老 API 判成错误
+    SWIFT_STRICT_CONCURRENCY: minimal
+    CLANG_ENABLE_MODULES: YES
 
 schemes:
   TVBox:

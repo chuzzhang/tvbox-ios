@@ -178,7 +178,34 @@ archive 少了 `CODE_SIGNING_ALLOWED=NO`。检查这一步的三个签名参数�
 **`No such file or directory: build/TVBox.xcarchive/Products/Applications/TVBox.app`**
 archive 其实失败了，日志往上翻找真正的报错，别只盯着打包这步。
 
-**Swift 编译报错** — 这类是真问题，本机没有 Swift 工具链验证不了类型，只能看 CI 日志改。把报错行贴出来最省事。
+**`Archive Error: Process completed with exit code 65`**
+
+65 是 `xcodebuild` 的通用失败码：编译错误、链接错误、签名错误都会落到它，本身不带信息。
+
+现在 workflow 的 archive 步骤把全部输出重定向到 `tvbox-ios/build.log`，失败时在日志里单独打印三段：
+
+```
+xcodebuild 退出码：65
+================ 编译错误 ================
+TVBox/xxx.swift:42:12: error: value of optional type 'JSValue?' must be unwrapped ...
+================ 失败原因 ================
+================ 日志尾部 50 行 ================
+** ARCHIVE FAILED **
+```
+
+只看带 `error:` 的那几行就够。同一份日志也作为 `TVBox-build-log` 附件上传，`xcresult` 一起在里面。
+
+定位对照：
+
+| 日志特征 | 含义 |
+|---|---|
+| `TVBox/xxx.swift:N:M: error:` | Swift 类型/语法错误，改那一行 |
+| `Undefined symbols for architecture arm64` | 链接缺库，检查 `OTHER_LDFLAGS` 或依赖是否编译进来 |
+| `error: No such module 'SwiftSoup'` | SPM 没解析成功，重跑「解析依赖」 |
+| `error: An empty identity is not valid` | 签名参数丢了 |
+| `** ARCHIVE FAILED **` 但没有任何 `error:` | 看尾部 50 行的 `xcodebuild: error:` 或 `note:` 行 |
+
+**Swift 编译报错** — 这类是真问题，本机没有 Swift 工具链验证不了类型。修过的几处（`JSValue(undefinedIn:)` 是可失败构造、`UIView.layerClass` 要用 `class` 不能用 `static`、`ForEach` 元素是元组时不能拆成两个闭包参数）都属于这一层，说明确实只有 CI 能兜住类型检查。
 
 ---
 

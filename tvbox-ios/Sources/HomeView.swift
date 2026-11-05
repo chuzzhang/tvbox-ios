@@ -95,7 +95,7 @@ struct FeedView: View {
     @State private var page = 1
     @State private var pageCount = 1
     @State private var loading = false
-    @State private var err: String?
+    @State private var err: String? = nil
 
     private var api: CMSApi { CMSApi(base: site.api, headers: [:]) }
 

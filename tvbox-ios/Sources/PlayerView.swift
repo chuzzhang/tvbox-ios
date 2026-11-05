@@ -7,13 +7,13 @@ import MobileVLCKit
 #endif
 
 /// 播放内核：AVPlayer 吃 HLS/MP4，VLCKit 兜底 MKV/AVI/RMVB/TS
-enum PlayerEngine {
+enum PlayerEngine: Equatable {
     case av
     case vlc
 }
 
 final class PlayerModel: ObservableObject {
-    @Published var error: String?
+    @Published var error: String? = nil
     @Published var ready = false
     @Published var engine: PlayerEngine = .av
 
@@ -295,7 +295,7 @@ struct AVPlayerLayerView: UIViewRepresentable {
 }
 
 final class PlayerContainerView: UIView {
-    override static var layerClass: AnyClass { AVPlayerLayer.self }
+    override class var layerClass: AnyClass { AVPlayerLayer.self }
     var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
 
     override init(frame: CGRect) {

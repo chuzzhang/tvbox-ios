@@ -7,9 +7,9 @@ struct DetailView: View {
     let item: VItem
     let loader: () async throws -> VDetail?
 
-    @State private var detail: VDetail?
+    @State private var detail: VDetail? = nil
     @State private var loading = true
-    @State private var err: String?
+    @State private var err: String? = nil
 
     init(site: Site, item: VItem) {
         self.site = site
@@ -61,7 +61,7 @@ struct DetailContent: View {
     let detail: VDetail
 
     @State private var lineIndex = 0
-    @State private var playing: Episode?
+    @State private var playing: Episode? = nil
 
     var body: some View {
         ScrollView {
@@ -159,14 +159,14 @@ struct DetailContent: View {
     }
 
     private var linePicker: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        let lines = detail.playLines
+        return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                let lines = Array(detail.playLines.enumerated())
-                ForEach(lines, id: \.offset) { i, line in
+                ForEach(0..<lines.count, id: \.self) { i in
                     Button {
                         lineIndex = i
                     } label: {
-                        Text(line.name)
+                        Text(lines[i].name)
                             .font(.system(size: 12, weight: .medium))
                             .padding(.horizontal, 11).padding(.vertical, 6)
                             .background(lineIndex == i ? Color.accentColor : Color(white: 0.16))

@@ -5,15 +5,15 @@ struct SpiderWebView: View {
     @EnvironmentObject var state: AppState
     let site: Site
 
-    @State private var spider: JSSpider?
-    @State private var initError: String?
+    @State private var spider: JSSpider? = nil
+    @State private var initError: String? = nil
     @State private var categories: [VCategory] = []
     @State private var current = ""
     @State private var items: [VItem] = []
     @State private var page = 1
     @State private var pageCount = 1
     @State private var loading = false
-    @State private var playing: VDetail?
+    @State private var playing: VDetail? = nil
 
     private let cols = [GridItem(.adaptive(minimum: 108, maximum: 150), spacing: 12)]
 

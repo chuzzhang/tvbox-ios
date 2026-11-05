@@ -9,7 +9,8 @@ final class JSSpider {
     private let ctx: JSContext
     private var emptyObj: JSValue {
         if let o = JSValue(newObjectIn: ctx) { return o }
-        return JSValue(undefinedIn: ctx)
+        // evaluateScript 返回 JSValue!，避免再用可失败构造带来的 optional
+        return ctx.evaluateScript("({})")
     }
     private(set) var ruleTitle: String
     private var lastError: String?

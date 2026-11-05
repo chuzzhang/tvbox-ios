@@ -8,8 +8,8 @@ struct SearchView: View {
     @State private var keyword = ""
     @State private var results: [VItem] = []
     @State private var loading = false
-    @State private var msg: String?
-    @State private var siteKey: String?
+    @State private var msg: String? = nil
+    @State private var siteKey: String? = nil
 
     private var site: Site? {
         let list = state.sites.filter { $0.canSearch }
