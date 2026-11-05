@@ -211,6 +211,18 @@ dex 需要 Android ART，iOS 没有对应运行时，换 CMS 站或 js spider �
 支持 `fyclass` / `fypage` / `**` 占位符、`body&&` 前缀、`cate_exclude`、`&&Text`/`&&href`/`&&data-original` 选择器链。
 官方 `drpy.min.js` 能下到就优先用它的实现，只有它没定义的函数才由内置解释器补。
 
+分类来源按这个顺序找：
+
+1. `class_name` + `class_url` 数组（不用请求）
+2. `class_parse` 选择器链，最常见的写法：
+   `"#primary-menu li.menu-item;a&&Text;a&&href;.pro/(.*)"` — 父选择器 / 名称 / 链接 / 从链接裁出 type_id 的正则
+3. `分类` 字符串（`电影&1#剧集&2`）或数组
+4. 首页导航里带 `vodtype`/`vodshow`/`list` 的链接
+
+`class_parse` 的 type_id 是正则裁出来的，会直接拼进 `url` 模板：
+正则 `.pro/(.*)` 对 `https://ddys.pro/pro/movie` 得到 `pro/movie`，配合 `url: "/fyclass/page/fypage/"`
+拼出 `https://ddys.pro/pro/movie/page/1/`。正则没匹配上就退回整条链接。
+
 ### 区分「上游挂了」和「客户端做不到」
 
 诊断里出现下面这行，说明问题不在本机：
@@ -223,6 +235,24 @@ HTTP 401 拒绝访问 — <url>
 `/dr_py/` 这类资源挂在个人资源站上，整目录 401/404 就是关站了。
 客户端会额外试一轮公开镜像（jsdelivr / raw.gitmirror 上的 dr_py 仓库），命中就在诊断里写
 `ext 改用镜像：<url>`；全失败则明确告诉你「直接原因在上游」。
+
+### 播放黑屏
+
+「列表能加载、点开是黑的」几乎都是播放地址的问题，播放前会先解析 + 探测（`Sources/PlayResolver.swift`）：
+
+| 情况 | 处理 |
+|---|---|
+| 地址是播放页：`/player/?url=https%3A%2F%2Fcdn%2F1.m3u8` | 取出 `url=` 里的真实地址 |
+| 相对路径：`/v/2024/xxx.m3u8` | 按站点地址补全 |
+| 裸请求 403（防盗链） | 带上 `Referer` + 浏览器 UA；裸请求不行就启用本地代理（`Sources/HLSLocalProxy.swift`） |
+| 返回的是 HTML 不是视频流 | 尝试配置里的 `parses` 解析接口，取回真实地址 |
+| 地址本身 404 / 失效 | 直接报「HTTP 404，文件不存在，换线路」 |
+
+iOS 上 `AVURLAssetHTTPHeaderFieldsKey` 是私有键、基本不生效，所以需要头的流走 `skd://` 本地代理：
+播放列表和分片都由 App 自己用带头的 URLSession 拉，`#EXT-X-KEY` 的密钥地址也会一并重写。
+
+15 秒还没画面就弹出「15 秒内没有画面」+ 探测记录（HTTP 码、Content-Type、是否走了解析接口），
+不再无限转圈。
 
 ## 七、安装到 iPhone
 

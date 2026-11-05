@@ -40,6 +40,18 @@ jobs:
         working-directory: tvbox-ios
         run: python3 tools/check.py
 
+      - name: 规则解释器单测
+        working-directory: tvbox-ios
+        run: |
+          if command -v node >/dev/null 2>&1; then
+            for f in tests/*.test.js; do
+              echo "→ $f"
+              node "$f"
+            done
+          else
+            echo "没有 node，跳过（不影响出包）"
+          fi
+
       - name: 生成工程
         working-directory: tvbox-ios
         run: xcodegen generate --spec project.yml

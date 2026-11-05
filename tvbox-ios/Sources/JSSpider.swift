@@ -158,6 +158,13 @@ final class JSSpider {
             }
             if !fields.isEmpty { s += "\nrule：" + fields.joined(separator: " · ") }
         }
+        // 解释器侧记录的请求与分类来源，抓不到分类时靠它定位是请求失败还是选择器没命中
+        if let logV = ctx.evaluateScript(
+            "(typeof __drpy_log__ !== 'undefined' && __drpy_log__ && __drpy_log__.length) ? __drpy_log__.slice(-10).join('\\n') : ''"),
+           !logV.isUndefined, !logV.isNull,
+           let t = logV.toString(), !t.isEmpty {
+            s += "\n解释器日志：\n" + t
+        }
         return s
     }
 

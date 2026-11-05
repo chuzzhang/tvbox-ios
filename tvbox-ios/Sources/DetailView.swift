@@ -91,7 +91,10 @@ struct DetailContent: View {
         }
         .background(Color(white: 0.06).ignoresSafeArea())
         .fullScreenCover(item: $playing) { ep in
-            PlayerView(urlString: ep.url, title: ep.name)
+            PlayerView(urlString: ep.url,
+                       title: ep.name,
+                       siteBase: site.apiURL(base: state.configBase),
+                       parses: state.config?.parses ?? [])
                 .environmentObject(state)
         }
     }

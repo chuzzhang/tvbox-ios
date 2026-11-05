@@ -206,8 +206,19 @@ function _headers() {
     return {};
 }
 
+function _log(msg) {
+    try {
+        if (!__G.__drpy_log__) __G.__drpy_log__ = [];
+        if (__G.__drpy_log__.length < 40) __G.__drpy_log__.push(String(msg));
+    } catch (e) {}
+}
+
+/* 同一次调用里同一个地址不该重复请求（首页会被分类解析用两遍） */
+var _pageCache = {};
+
 function _get(url) {
-    if (!url) return '';
+    if (!url) { _log('请求被跳过：地址为空'); return ''; }
+    if (typeof _pageCache[url] === 'string') return _pageCache[url];
     var h = _headers();
     // 规则没写 Referer 时补站点主页：不少源站只校验 Referer
     var hasRef = false;
@@ -220,8 +231,12 @@ function _get(url) {
     }
     try {
         var body = request(url, { headers: h });
-        return body ? String(body) : '';
+        body = body ? String(body) : '';
+        _log('GET ' + url + ' → ' + body.length + ' 字符');
+        _pageCache[url] = body;
+        return body;
     } catch (e) {
+        _log('GET ' + url + ' → 异常 ' + (e && e.message ? e.message : e));
         return '';
     }
 }
@@ -301,13 +316,89 @@ function _classFromArrays(r) {
     return out.length ? out : null;
 }
 
+/*
+ * class_parse 是 drpy 里最常见的分类来源，语法是选择器链：
+ *   "#primary-menu li.menu-item;a&&Text;a&&href;.pro/(.*)"
+ *   父选择器            名称     链接    从链接里提取 type_id 的正则
+ * 正则匹配失败时按 drpy 的行为退回整条链接（categoryContent 遇到 http 开头的 tid 直接用）。
+ * 多组候选用 || 分隔，第一组抓不到就换下一组。
+ */
+function _classOne(spec, html) {
+    var p = _split(spec);
+    if (p.length < 2) return [];
+
+    var blocks = [];
+    try { blocks = pdfa(html, _css(p[0])) || []; } catch (e) { blocks = []; }
+    if (!blocks.length) return [];
+
+    var re = null;
+    if (p.length >= 4 && p[3]) {
+        try { re = new RegExp(p[3]); } catch (e) { re = null; }
+    }
+
+    var out = [];
+    var seen = {};
+    for (var i = 0; i < blocks.length && out.length < 30; i++) {
+        var b = blocks[i];
+        var name = p[1] ? _txt(b, p[1]) : _plain(b);
+        name = String(name || '').replace(/[\s\u3000]+/g, ' ').trim();
+        if (!name) continue;
+
+        var link = p[2] ? _txt(b, p[2]) : _attr(b, 'href');
+        var abs = _abs(link);
+        var id = abs;
+        if (re && abs) {
+            var m = re.exec(abs);
+            if (m && m[1]) id = String(m[1]).replace(/\/+$/, '');
+        }
+        if (!id) continue;
+        if (seen[id]) continue;
+        seen[id] = 1;
+        out.push({ type_name: name, type_id: id });
+    }
+    return out;
+}
+
+function _parseClassSelector(spec, html) {
+    if (!html) return [];
+    var groups = String(spec).split('||');
+    for (var i = 0; i < groups.length; i++) {
+        var out = _classOne(groups[i], html);
+        if (out.length) return out;
+    }
+    return [];
+}
+
+/* 抓分类用的页面：homeUrl → 首页 → host */
+function _homeURL(r) {
+    var u = _pick(r, ['homeUrl', '首页', 'home', '网址', 'host', '域名', 'url', '分类url']);
+    return _abs(_s(u));
+}
+
 function homeContent(filter) {
     var r = _rules();
 
+    // 1) class_name + class_url：不用请求，最可靠
     var byArrays = _classFromArrays(r);
-    if (byArrays) return { class: byArrays };
+    if (byArrays) {
+        _log('分类来源：class_name/class_url（' + byArrays.length + ' 项）');
+        return { class: byArrays };
+    }
 
-    var cateRaw = _pick(r, ['分类', 'class', '分类数据', 'categories', 'class_parse']);
+    // 2) class_parse：选择器链，抓首页导航
+    var cp = _s(_pick(r, ['class_parse', '分类解析', 'cate_parse']));
+    if (cp && cp.indexOf(';') > 0) {
+        var home = _homeURL(r);
+        var hHtml = _get(home);
+        var byParse = _parseClassSelector(cp, hHtml);
+        if (byParse.length) {
+            _log('分类来源：class_parse（' + byParse.length + ' 项）');
+            return { class: byParse };
+        }
+        _log('class_parse 没抓到（父选择器 ' + _split(cp)[0] + '）');
+    }
+
+    var cateRaw = _pick(r, ['分类', 'class', '分类数据', 'categories']);
 
     if (cateRaw && typeof cateRaw === 'object' && cateRaw.length) {
         var arr = [];
@@ -327,8 +418,7 @@ function homeContent(filter) {
         // 单个"分类"字符串也可能是选择器，落到下面按选择器抓
     }
 
-    var home = _abs(_s(_pick(r, ['首页', 'home', 'homeUrl', '网址', '分类url', 'url'])));
-    var html = _get(home);
+    var html = _get(_homeURL(r));
 
     // 分类写成选择器：".nav a&&Text&&href" 这种
     if (typeof cateRaw === 'string' && cateRaw.indexOf('&&') > 0 && html) {

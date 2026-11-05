@@ -254,11 +254,35 @@ struct Live: Codable, Identifiable {
 }
 
 struct Parse: Codable, Identifiable {
-    var name: String
-    var type: Int
-    var url: String
+    var name: String = ""
+    var type: Int = 0
+    var url: String = ""
     var ext: JSONAny?
     var id: String { name + url }
+
+    private enum ParseKeys: String, CodingKey {
+        case name, type, url, ext
+    }
+
+    init(name: String = "", type: Int = 0, url: String = "", ext: JSONAny? = nil) {
+        self.name = name
+        self.type = type
+        self.url = url
+        self.ext = ext
+    }
+
+    // 有的配置把 type 写成 "1"，缺字段也很常见 —— 宽松点，别让整条解析接口被丢掉
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: ParseKeys.self)
+        if let v = try? c.decodeIfPresent(String.self, forKey: .name) { name = v }
+        if let v = try? c.decodeIfPresent(String.self, forKey: .url) { url = v }
+        if let t = try? c.decodeIfPresent(Int.self, forKey: .type) {
+            type = t
+        } else if let s = try? c.decodeIfPresent(String.self, forKey: .type), let t = Int(s) {
+            type = t
+        }
+        ext = try? c.decodeIfPresent(JSONAny.self, forKey: .ext)
+    }
 }
 
 // MARK: - 宽松解码
@@ -346,10 +370,11 @@ struct VDetail: Codable, Identifiable {
                     let name = parts[0].trimmingCharacters(in: .whitespaces)
                     // 部分源用 "name$url$extra"，只取前两段
                     let url = parts[1].trimmingCharacters(in: .whitespaces)
-                    if url.hasPrefix("http") || url.contains("://") {
+                    // 相对路径和播放页地址也留着：PlayResolver 会补 host、抽 ?url=
+                    if !url.isEmpty, url != "#" {
                         eps.append(Episode(name: name.isEmpty ? "第\(eps.count + 1)集" : name, url: url))
                     }
-                } else if seg.hasPrefix("http") {
+                } else if !seg.isEmpty, seg != "#" {
                     eps.append(Episode(name: "第\(eps.count + 1)集", url: seg))
                 }
             }
