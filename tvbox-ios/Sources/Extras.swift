@@ -91,18 +91,53 @@ struct SearchView: View {
 
     @MainActor
     private func run() async {
-        guard let site, site.isCMS else {
-            msg = "该站不支持搜索或需要 JS 引擎"
+        guard let site else {
+            msg = "配置里没有站点"
             return
         }
         loading = true
         msg = nil
         results = []
         let kw = keyword.trimmingCharacters(in: .whitespaces)
+
+        if site.isCMSRoute {
+            do {
+                let r = try await CMSApi(base: site.api).search(wd: kw)
+                results = r
+                if r.isEmpty { msg = "没有找到「\(kw)」" }
+            } catch {
+                msg = error.localizedDescription
+            }
+            loading = false
+            return
+        }
+
+        guard site.isSpiderRoute else {
+            msg = "站点类型 \(site.type) 不支持搜索"
+            loading = false
+            return
+        }
+
+        // 脚本站在后台线程跑：JS 里的同步请求会阻塞，不能占着主线程
+        var report = state.spiderReport
+        if report == nil, let raw = state.config?.spider {
+            report = await SpiderStore.shared.report(for: raw)
+        }
         do {
-            let r = try await CMSApi(base: site.api).search(wd: kw)
-            results = r
-            if r.isEmpty { msg = "没有找到「\(kw)」" }
+            let r = try await ScriptResolver.resolve(site, spider: report)
+            let lib = ScriptResolver.bundledLib()
+            let scripts = r.scripts
+            let found = await Task.detached(priority: .userInitiated) { () -> (items: [VItem], err: String?) in
+                guard let sp = JSSpider(site: site, lib: lib, scripts: scripts) else {
+                    return ([], "JSContext 创建失败")
+                }
+                let items = sp.search(key: kw)
+                return (items, sp.errorText)
+            }.value
+            results = found.items
+            if results.isEmpty {
+                msg = found.err ?? "没有找到「\(kw)」（该站可能没写 searchContent）"
+            }
         } catch {
             msg = error.localizedDescription
         }

@@ -1,75 +1,78 @@
 import Foundation
 import ZIPFoundation
 
-/// spider 脚本解析：type 3/4 站点的 api 可能指向 .js，也可能指向 .jar。
-/// iOS 禁止 DexClassLoader 动态加载可执行代码，jar 里的 dex 跑不了，
-/// 但 TVBox 生态里相当一部分 jar 同时内置了 js 版实现 —— 从 jar 里抽出来用 JS 引擎跑。
+/// 把站点解析成「要执行的 js 段」。
+///
+/// 优先级：站点自带的 js/jar → 配置顶层 spider → 内置 Resources/spider.js。
+/// 真实配置里 type 3 站点的 api 多数是 `csp_xxx` 这种标识符，脚本来自顶层 spider，
+/// 所以顶层 spider 必须参与，否则每个脚本型站点都会落空。
 enum ScriptResolver {
 
     struct Resolved {
-        var lib: String?
-        var code: String
+        var scripts: [String]
         var source: String
+        /// 逐条解析过程，失败时直接显示给用户，省得靠猜
+        var diagnostics: String
     }
 
-    static func resolve(_ site: Site) async throws -> Resolved {
+    static func resolve(_ site: Site, spider: SpiderStore.Report?) async throws -> Resolved {
+        var notes: [String] = []
         let api = site.api.trimmingCharacters(in: .whitespacesAndNewlines)
         let lower = api.lowercased()
+        notes.append("站点 key=\(site.key)  type=\(site.type)")
+        notes.append("api=\(api.isEmpty ? "（空）" : api)")
 
-        if lower.hasSuffix(".js") {
-            let code = try await Net.shared.fetchText(api)
-            return Resolved(lib: bundledLib(), code: code, source: "remote:\(api)")
-        }
-
-        if lower.hasSuffix(".jar") {
-            let data = try await Net.shared.fetch(api, timeout: 30)
-            if let js = extractJS(from: data) {
-                return Resolved(lib: bundledLib(), code: js.text, source: "jar:\(js.name)")
+        // 1) 站点自己的脚本
+        if lower.hasPrefix("http") {
+            if lower.contains(".js") {
+                do {
+                    let text = try await Net.shared.fetchText(api)
+                    if !text.isEmpty {
+                        notes.append("使用站点自带 js：\(text.count / 1024) KB")
+                        return Resolved(scripts: [text], source: "site.js", diagnostics: notes.joined(separator: "\n"))
+                    }
+                    notes.append("站点 api 指向的 js 是空文件")
+                } catch {
+                    notes.append("站点脚本下载失败：\(error.localizedDescription)")
+                }
+            } else if lower.contains(".jar") {
+                do {
+                    let data = try await Net.shared.fetch(api, timeout: 40)
+                    let ex = SpiderStore.extract(data, preferKey: site.key)
+                    if !ex.scripts.isEmpty {
+                        notes.append("站点 jar 内抽到 \(ex.scripts.count) 段 js：\(ex.jsNames.prefix(3).joined(separator: ", "))")
+                        return Resolved(scripts: ex.scripts, source: "site.jar", diagnostics: notes.joined(separator: "\n"))
+                    }
+                    notes.append("站点 jar 内 \(ex.entries.count) 个文件，没有 js")
+                } catch {
+                    notes.append("站点 jar 下载失败：\(error.localizedDescription)")
+                }
             }
-            throw NetError.decode(
-                "jar 内没有可用的 js 实现",
-                "该站点只能在 Android 上跑 dex spider。替代做法：在配置里把该站换成一个 CMS 接口或 js 版来源。"
-            )
         }
 
+        // 2) 配置顶层 spider
+        if let sp = spider {
+            notes.append(sp.summary)
+            if !sp.entries.isEmpty {
+                notes.append("spider 包内文件：" + sp.entries.prefix(12).joined(separator: ", "))
+            }
+            if let b = sp.bundle, !b.scripts.isEmpty {
+                return Resolved(scripts: b.scripts, source: b.source, diagnostics: notes.joined(separator: "\n"))
+            }
+        } else {
+            notes.append("顶层 spider 尚未加载")
+        }
+
+        // 3) 内置脚本（用户把 spider.js 放进 Resources 时生效）
         if let local = bundledSpider() {
-            return Resolved(lib: bundledLib(), code: local, source: "bundle:spider.js")
+            notes.append("使用内置 Resources/spider.js")
+            return Resolved(scripts: [local], source: "bundle:spider.js", diagnostics: notes.joined(separator: "\n"))
         }
 
-        throw NetError.decode(
-            "没有可执行的脚本",
-            "把对应 spider.js 放进 Resources（命名 spider.js），或把该站 api 改成 .js 直链。"
-        )
-    }
-
-    // MARK: - jar 内抽 js
-
-    private static func extractJS(from data: Data) -> (name: String, text: String)? {
-        guard let archive = try? Archive(data: data, accessMode: .read) else { return nil }
-
-        var candidates: [(name: String, text: String, score: Int)] = []
-
-        for entry in archive where entry.type == .file {
-            let name = entry.path
-            guard name.lowercased().hasSuffix(".js") else { continue }
-            guard entry.uncompressedSize > 0, entry.uncompressedSize < 8 * 1024 * 1024 else { continue }
-            var buf = Data()
-            guard (try? archive.extract(entry) { buf.append($0) }) != nil else { continue }
-            guard let text = String(data: buf, encoding: .utf8), !text.isEmpty else { continue }
-
-            // 按 TVBox spider 契约打分：实现得越全越优先
-            var score = 0
-            for key in ["homeContent", "categoryContent", "detailContent", "searchContent", "var rule", "rule="] {
-                if text.contains(key) { score += 1 }
-            }
-            if score > 0 { candidates.append((name, text, score)) }
-        }
-
-        // 单文件得分最高者；同分取体积大的（通常是主实现而非 polyfill）
-        return candidates
-            .sorted { a, b in a.score == b.score ? a.text.count > b.text.count : a.score > b.score }
-            .first
-            .map { ($0.name, $0.text) }
+        notes.append("—— 结论：这个站点在 iOS 上缺可执行的脚本")
+        notes.append("纯 dex 的 jar spider 需要 Android 运行时，iOS 没有对应实现；")
+        notes.append("换成 CMS 站点（type 0/1）或 js spider 站点才能用。")
+        throw NetError.decode("站点「\(site.name)」没有可执行的脚本", notes.joined(separator: "\n"))
     }
 
     // MARK: - 内置资源

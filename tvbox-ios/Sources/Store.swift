@@ -10,6 +10,8 @@ final class AppState: ObservableObject {
     /// 详细的失败原文，弹窗关掉后仍留在配置页，方便长按复制
     @Published var lastErrorDetail: String? = nil
     @Published var selectedSiteKey: String? = nil
+    /// 顶层 spider 的加载结果，脚本型站点全靠它
+    @Published var spiderReport: SpiderStore.Report? = nil
 
     @Published var history: [VItem] = []
     @Published var favorites: [VItem] = []
@@ -26,11 +28,13 @@ final class AppState: ObservableObject {
 
     var sites: [Site] {
         var seen = Set<String>()
-        return (config?.sites ?? []).filter { s in
+        let list = (config?.sites ?? []).filter { s in
             guard s.isUsable, !seen.contains(s.id) else { return false }
             seen.insert(s.id)
             return true
         }
+        // CMS 站排前面：脚本站在 iOS 上要看 jar 里有没有 js，能用的概率低
+        return list.filter { $0.isCMSRoute } + list.filter { !$0.isCMSRoute }
     }
 
     var selectedSite: Site? {
@@ -51,7 +55,17 @@ final class AppState: ObservableObject {
             }
             config = cfg
             ud.set(configText, forKey: "cfg.url")
-            if selectedSiteKey == nil { selectedSiteKey = (cfg.sites ?? []).first(where: { $0.isUsable })?.key }
+            if selectedSiteKey == nil {
+                // 优先落到 CMS 站：脚本站在 iOS 上受 jar 限制，CMS 站基本都能出内容
+                let usable = (cfg.sites ?? []).filter { $0.isUsable }
+                selectedSiteKey = (usable.first { $0.isCMSRoute } ?? usable.first)?.key
+            }
+
+            // 顶层 spider 后台加载，不挡住配置显示
+            let spiderField = cfg.spider
+            Task { @MainActor in
+                spiderReport = await SpiderStore.shared.report(for: spiderField)
+            }
         } catch {
             let msg = error.localizedDescription
             errorMessage = msg

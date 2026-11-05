@@ -89,6 +89,22 @@ struct ConfigView: View {
                 .foregroundColor(.secondary)
             }
 
+            if let report = state.spiderReport {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("顶层 spider")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text(report.summary)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(report.ok ? .green : .orange)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(10)
+                .background(Color(white: 0.12))
+                .cornerRadius(10)
+            }
+
             if let detail = state.lastErrorDetail {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("上次失败原因")
@@ -110,5 +126,8 @@ struct ConfigView: View {
             Spacer()
         }
         .padding(24)
+        .onAppear {
+            if input.isEmpty { input = state.configText }
+        }
     }
 }

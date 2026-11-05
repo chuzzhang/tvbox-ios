@@ -12,10 +12,10 @@ struct HomeView: View {
                 header
 
                 if let site = state.selectedSite {
-                    if site.isCMS {
+                    if site.isCMSRoute {
                         FeedView(site: site)
                             .id(site.key)
-                    } else if site.isSpider {
+                    } else if site.isSpiderRoute {
                         SpiderWebView(site: site)
                             .id(site.key)
                     } else {
@@ -48,7 +48,8 @@ struct HomeView: View {
                         Button {
                             state.select(site)
                         } label: {
-                            Label(site.name, systemImage: site.key == state.selectedSite?.key ? "checkmark" : "tv")
+                            Label("\(site.name)  ·  \(site.routeLabel)",
+                                  systemImage: site.key == state.selectedSite?.key ? "checkmark" : "tv")
                         }
                     }
                 } label: {
@@ -128,7 +129,7 @@ struct FeedView: View {
             }
 
             if let err {
-                UnsupportedView(text: err).frame(maxHeight: .infinity)
+                DiagnosticView(text: err)
             } else {
                 ScrollView {
                     LazyVGrid(columns: cols, spacing: 14) {

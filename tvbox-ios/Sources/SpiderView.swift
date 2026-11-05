@@ -20,7 +20,7 @@ struct SpiderWebView: View {
     var body: some View {
         VStack(spacing: 0) {
             if let initError {
-                UnsupportedView(text: initError)
+                DiagnosticView(text: initError)
             } else if spider == nil {
                 VStack(spacing: 12) {
                     ProgressView()
@@ -94,21 +94,29 @@ struct SpiderWebView: View {
         guard spider == nil, initError == nil else { return }
         loading = true
         do {
-            let r = try await ScriptResolver.resolve(site)
-            guard let s = JSSpider(site: site, lib: r.lib, code: r.code) else {
-                throw NetError.decode("JSContext 创建失败", r.source)
+            // 配置刚导入时 spider 可能还在后台下载，这里补一次
+            var report = state.spiderReport
+            if report == nil, let raw = state.config?.spider {
+                report = await SpiderStore.shared.report(for: raw)
+            }
+            let r = try await ScriptResolver.resolve(site, spider: report)
+            guard let s = JSSpider(site: site, lib: ScriptResolver.bundledLib(), scripts: r.scripts) else {
+                throw NetError.decode("JSContext 创建失败", r.diagnostics)
             }
             spider = s
             let cats = s.home()
             categories = cats
             current = cats.first?.type_id ?? ""
+
             if let e = s.errorText {
-                initError = "脚本异常（\(r.source)）：\(e)"
+                initError = "脚本执行报错\n\n" + e + "\n\n———— 加载过程 ————\n" + r.diagnostics
                 loading = false
                 return
             }
             if cats.isEmpty {
-                initError = "脚本没有返回分类（\(r.source)）"
+                initError = "脚本跑起来了，但没拿到分类\n\n"
+                    + s.loadSummary
+                    + "\n\n———— 加载过程 ————\n" + r.diagnostics
                 loading = false
                 return
             }
@@ -151,5 +159,30 @@ struct SpiderWebView: View {
         guard let spider else { return }
         let d = spider.detail(id: item.vod_id)
         if let d { playing = d }
+    }
+}
+
+/// 站点不可用时的诊断面板：内容可选、可复制，直接发出来就能定位
+struct DiagnosticView: View {
+    let text: String
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                    Text("加载失败")
+                        .font(.subheadline.weight(.semibold))
+                }
+                Text(text)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(16)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

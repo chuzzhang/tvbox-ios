@@ -201,6 +201,30 @@ struct Site: Codable, Identifiable {
     var isCMS: Bool { type == 0 || type == 1 }
     var isSpider: Bool { type == 3 || type == 4 }
 
+    /// 实际该怎么走。
+    /// 配置里 type 标错的很多：标成 3（spider）但 api 是 http 的 CMS 直链。
+    /// 这种按 CMS 走直接出内容，比硬塞进 JS 引擎靠谱。
+    var effectiveType: Int {
+        let a = api.trimmingCharacters(in: .whitespaces)
+        let l = a.lowercased()
+        if isSpider, l.hasPrefix("http"), !l.contains(".js"), !l.contains(".jar") {
+            return 1
+        }
+        return type
+    }
+
+    var isCMSRoute: Bool { effectiveType == 0 || effectiveType == 1 }
+    var isSpiderRoute: Bool { effectiveType == 3 || effectiveType == 4 }
+
+    /// 给站点列表做标注，一眼看出哪个能用
+    var routeLabel: String {
+        if isCMSRoute { return "CMS" }
+        let a = api.lowercased()
+        if a.contains(".js") { return "js 脚本" }
+        if a.contains(".jar") { return "jar 脚本" }
+        return "jar 内置"
+    }
+
     /// 有没有可用入口：有 api，或至少给了 ext（脚本站点常把入口放在 ext 里）
     var isUsable: Bool {
         if !api.trimmingCharacters(in: .whitespaces).isEmpty { return true }
@@ -227,6 +251,44 @@ struct Parse: Codable, Identifiable {
     var url: String
     var ext: JSONAny?
     var id: String { name + url }
+}
+
+// MARK: - 宽松解码
+// 同一份 CMS 接口，type_id 有时是 "1" 有时是 1，pagecount 有时是字符串。
+// 用动态 key + 逐个类型试探，避免一个字段类型不符就把整页内容丢掉。
+
+enum Loose {
+    struct AnyKey: CodingKey {
+        var stringValue: String
+        var intValue: Int?
+
+        init(_ s: String) {
+            stringValue = s
+            intValue = Int(s)
+        }
+        // 外部标签用协议要求的名字，内部换名，避免构造器委托时自己调自己
+        init?(stringValue s: String) { self.init(s) }
+        init?(intValue i: Int) { self.init(String(i)) }
+    }
+
+    static func text(_ c: KeyedDecodingContainer<AnyKey>, _ name: String) -> String? {
+        let k = AnyKey(name)
+        if let v = try? c.decodeIfPresent(String.self, forKey: k), !v.isEmpty { return v }
+        if let v = try? c.decodeIfPresent(Int.self, forKey: k) { return String(v) }
+        if let v = try? c.decodeIfPresent(Double.self, forKey: k) { return String(v) }
+        if let v = try? c.decodeIfPresent(Bool.self, forKey: k) { return v ? "1" : "0" }
+        return nil
+    }
+
+    static func int(_ c: KeyedDecodingContainer<AnyKey>, _ name: String) -> Int? {
+        let k = AnyKey(name)
+        if let v = try? c.decodeIfPresent(Int.self, forKey: k) { return v }
+        if let s = try? c.decodeIfPresent(String.self, forKey: k) {
+            return Int(s.trimmingCharacters(in: .whitespaces))
+        }
+        if let v = try? c.decodeIfPresent(Double.self, forKey: k) { return Int(v) }
+        return nil
+    }
 }
 
 // MARK: - 内容模型
@@ -305,16 +367,110 @@ struct Episode: Identifiable, Hashable {
 }
 
 // MARK: - CMS 接口响应包
-struct CMSListResponse: Codable {
+struct CMSListResponse: Decodable {
     var `class`: [VCategory]?
     var list: [VItem]?
     var page: Int?
     var pagecount: Int?
     var total: Int?
     var msg: String?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Loose.AnyKey.self)
+        self.`class` = try? c.decodeIfPresent([VCategory].self, forKey: Loose.AnyKey("class"))
+        self.list = try? c.decodeIfPresent([VItem].self, forKey: Loose.AnyKey("list"))
+        self.page = Loose.int(c, "page")
+        self.pagecount = Loose.int(c, "pagecount")
+            ?? Loose.int(c, "page_count")
+            ?? Loose.int(c, "total_page")
+            ?? Loose.int(c, "pages")
+        self.total = Loose.int(c, "total")
+        self.msg = Loose.text(c, "msg")
+    }
 }
 
-struct CMSDetailResponse: Codable {
+struct CMSDetailResponse: Decodable {
     var list: [VDetail]?
     var msg: String?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Loose.AnyKey.self)
+        self.list = try? c.decodeIfPresent([VDetail].self, forKey: Loose.AnyKey("list"))
+        self.msg = Loose.text(c, "msg")
+    }
+}
+
+// MARK: - 内容模型的宽松解码
+// 写在 extension 里，保留各 struct 的 memberwise init
+
+extension VCategory {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Loose.AnyKey.self)
+        let tid = Loose.text(c, "type_id") ?? Loose.text(c, "type") ?? ""
+        let name = Loose.text(c, "type_name") ?? Loose.text(c, "name") ?? ""
+        self.type_id = tid
+        self.type_name = name.isEmpty ? tid : name
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: Loose.AnyKey.self)
+        try c.encode(type_id, forKey: Loose.AnyKey("type_id"))
+        try c.encode(type_name, forKey: Loose.AnyKey("type_name"))
+    }
+}
+
+extension VItem {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Loose.AnyKey.self)
+        let vid = Loose.text(c, "vod_id") ?? Loose.text(c, "id") ?? ""
+        let name = Loose.text(c, "vod_name") ?? Loose.text(c, "name") ?? ""
+        self.vod_id = vid
+        self.vod_name = name.isEmpty ? vid : name
+        self.vod_pic = Loose.text(c, "vod_pic")
+        self.vod_remarks = Loose.text(c, "vod_remarks") ?? Loose.text(c, "note")
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: Loose.AnyKey.self)
+        try c.encode(vod_id, forKey: Loose.AnyKey("vod_id"))
+        try c.encode(vod_name, forKey: Loose.AnyKey("vod_name"))
+        try c.encodeIfPresent(vod_pic, forKey: Loose.AnyKey("vod_pic"))
+        try c.encodeIfPresent(vod_remarks, forKey: Loose.AnyKey("vod_remarks"))
+    }
+}
+
+extension VDetail {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Loose.AnyKey.self)
+        let vid = Loose.text(c, "vod_id") ?? ""
+        let name = Loose.text(c, "vod_name") ?? ""
+        self.vod_id = vid
+        self.vod_name = name.isEmpty ? vid : name
+        self.vod_pic = Loose.text(c, "vod_pic")
+        self.vod_content = Loose.text(c, "vod_content") ?? Loose.text(c, "vod_blurb")
+        self.vod_remarks = Loose.text(c, "vod_remarks")
+        self.vod_year = Loose.text(c, "vod_year")
+        self.vod_area = Loose.text(c, "vod_area")
+        self.vod_actor = Loose.text(c, "vod_actor")
+        self.vod_director = Loose.text(c, "vod_director")
+        self.type_name = Loose.text(c, "type_name")
+        self.vod_play_from = Loose.text(c, "vod_play_from")
+        self.vod_play_url = Loose.text(c, "vod_play_url")
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: Loose.AnyKey.self)
+        try c.encode(vod_id, forKey: Loose.AnyKey("vod_id"))
+        try c.encode(vod_name, forKey: Loose.AnyKey("vod_name"))
+        try c.encodeIfPresent(vod_pic, forKey: Loose.AnyKey("vod_pic"))
+        try c.encodeIfPresent(vod_content, forKey: Loose.AnyKey("vod_content"))
+        try c.encodeIfPresent(vod_remarks, forKey: Loose.AnyKey("vod_remarks"))
+        try c.encodeIfPresent(vod_year, forKey: Loose.AnyKey("vod_year"))
+        try c.encodeIfPresent(vod_area, forKey: Loose.AnyKey("vod_area"))
+        try c.encodeIfPresent(vod_actor, forKey: Loose.AnyKey("vod_actor"))
+        try c.encodeIfPresent(vod_director, forKey: Loose.AnyKey("vod_director"))
+        try c.encodeIfPresent(type_name, forKey: Loose.AnyKey("type_name"))
+        try c.encodeIfPresent(vod_play_from, forKey: Loose.AnyKey("vod_play_from"))
+        try c.encodeIfPresent(vod_play_url, forKey: Loose.AnyKey("vod_play_url"))
+    }
 }

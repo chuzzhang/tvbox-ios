@@ -152,6 +152,49 @@ push 完 Actions 自动跑 `build-ipa`（`macos-14`），6～9 分钟出结果�
 | `3/4` js spider | ✅ JavaScriptCore |
 | `3/4` jar spider | ⚠️ jar 内含 js 则可用，纯 dex 不行 |
 
+### 站点加载链路
+
+配置顶层的 `spider` 字段现在会真正被使用。TVBox 的真实结构是：
+
+```json
+{
+  "spider": "https://x/spider.jar;md5;abc123",
+  "sites": [
+    {"key":"csp_abc","name":"某站","type":3,"api":"csp_abc"},
+    {"key":"cms1","name":"某 CMS","type":1,"api":"https://x/api.php/provide/vod/"}
+  ]
+}
+```
+
+`type 3` 站点的 `api` 是 `csp_abc` 这种标识符，不是地址 —— 脚本来自顶层 `spider`，
+不加载它就一个都跑不起来。现在的顺序是：
+
+1. 站点 api 本身是 `.js` / `.jar` → 用它
+2. 否则用顶层 `spider`（`.js` 直接跑；`.jar` 先解包抽 js，优先文件名匹配站点 key 的）
+3. 再否则用内置 `Resources/spider.js`（把脚本放进去就生效）
+
+地址后面的 `;md5;` `;pk;` 等校验后缀会先剥掉再请求。
+`key`、`ext`、`host`、`__key__`、`__ext__` 会注入 JS 全局，供 `eval(key)` 这类分派方式使用。
+
+### 页面左上角的下拉里，站点名后面带类型
+
+| 标注 | 含义 |
+|---|---|
+| `CMS` | 直接走接口，基本都能用 |
+| `js 脚本` | api 指向 js 文件 |
+| `jar 脚本` | api 指向 jar，内含 js 才可用 |
+| `jar 内置` | api 是 `csp_xxx`，脚本在顶层 jar 里；纯 dex 的 jar 不可用 |
+
+CMS 站会自动排在前面并被默认选中。
+
+### 跑不起来时
+
+页面会给出可复制的诊断，包含：spider 的下载结果、jar 内文件清单、
+站点 api / key / ext、脚本定义了哪些函数（`homeContent` / `rule` / `class_parse`…）。
+
+看到「没有 js；含 N 个 dex 字节码」就是遇到了硬限制：
+dex 需要 Android ART，iOS 没有对应运行时，换 CMS 站或 js spider 站才能用。
+
 ## 七、安装到 iPhone
 
 | 方式 | 有效期 | 条件 |
