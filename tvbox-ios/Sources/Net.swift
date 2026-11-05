@@ -101,7 +101,15 @@ enum NetError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .badURL(let u): return "地址无效：\(u)"
-        case .status(let c, let u): return "HTTP \(c) — \(u)"
+        case .status(let c, let u):
+            switch c {
+            case 401, 403:
+                return "HTTP \(c) 拒绝访问 — \(u)\n（服务端开了鉴权/防盗链，换 UA、加 Referer 都无效）"
+            case 404:
+                return "HTTP 404 文件不存在 — \(u)"
+            default:
+                return "HTTP \(c) — \(u)"
+            }
         case .empty: return "返回内容为空"
         case .decode(let e, let body): return "解析失败：\(e)\n\(body)"
         }
@@ -295,7 +303,17 @@ final class TrustAllDelegate: NSObject, URLSessionDelegate {
 // 全部失败才把最后一次的错误抛出去。
 extension Net {
 
+    /// 下载结果：真从镜像拿到时 `mirror` 是镜像地址，否则为 nil
+    struct ScriptFetch {
+        var data: Data
+        var mirror: String?
+    }
+
     func fetchScriptData(_ urlString: String, referer: String? = nil) async throws -> Data {
+        try await fetchScriptTracked(urlString, referer: referer).data
+    }
+
+    func fetchScriptTracked(_ urlString: String, referer: String? = nil) async throws -> ScriptFetch {
         let origin = URLKit.origin(urlString)
         let refs: [String?] = [nil, referer ?? (origin.isEmpty ? nil : origin)]
         let uas = [
@@ -315,11 +333,23 @@ extension Net {
             var headers: [String: String] = ["User-Agent": ua]
             if let ref, !ref.isEmpty { headers["Referer"] = ref }
             do {
-                return try await fetch(urlString, headers: headers, timeout: 25, retry: 0)
+                return ScriptFetch(data: try await fetch(urlString, headers: headers, timeout: 25, retry: 0),
+                                   mirror: nil)
             } catch {
                 lastError = error
             }
         }
+
+        // 原地址彻底不给（401/403/404）：走 drpy 资源的公开镜像。
+        // 只对 /dr_py/ 这类路径生成候选，别的文件在镜像上不存在。
+        if let e = lastError as? NetError, case .status(let code, _) = e, code == 401 || code == 403 || code == 404 {
+            for mirror in ScriptMirror.candidates(for: urlString) {
+                if let data = try? await fetch(mirror, timeout: 8, retry: 0), !data.isEmpty {
+                    return ScriptFetch(data: data, mirror: mirror)
+                }
+            }
+        }
+
         throw lastError
     }
 }

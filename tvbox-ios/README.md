@@ -195,6 +195,35 @@ CMS 站会自动排在前面并被默认选中。
 看到「没有 js；含 N 个 dex 字节码」就是遇到了硬限制：
 dex 需要 Android ART，iOS 没有对应运行时，换 CMS 站或 js spider 站才能用。
 
+诊断页底部有两个按钮：**重试** 和 **换下一个可用站点**。
+后者会把当前站点标记为不可用（本地记着），跳到下一个 CMS 站，下次启动也不会再自动落到它身上。
+
+### drpy 站点（api 是 drpy.min.js）
+
+这类站点的 `api` 指向**框架库**，规则在 `ext` 里，写法有两种：
+
+| ext 形态 | 处理 |
+|---|---|
+| JSON 规则（`./json/xxx.json`，中文字段 `一级`/`二级`/`分类url`） | 内置解释器直接执行 |
+| js 规则（`./js/xxx.js`，英文字段 `class_name`/`class_url`/`url`/`searchUrl` + `var rule = {}`） | 先执行规则文件，再由解释器按规则生成 4 个入口 |
+
+解释器覆盖 `homeContent` / `categoryContent` / `detailContent` / `searchContent`，
+支持 `fyclass` / `fypage` / `**` 占位符、`body&&` 前缀、`cate_exclude`、`&&Text`/`&&href`/`&&data-original` 选择器链。
+官方 `drpy.min.js` 能下到就优先用它的实现，只有它没定义的函数才由内置解释器补。
+
+### 区分「上游挂了」和「客户端做不到」
+
+诊断里出现下面这行，说明问题不在本机：
+
+```
+HTTP 401 拒绝访问 — <url>
+（服务端开了鉴权/防盗链，换 UA、加 Referer 都无效）
+```
+
+`/dr_py/` 这类资源挂在个人资源站上，整目录 401/404 就是关站了。
+客户端会额外试一轮公开镜像（jsdelivr / raw.gitmirror 上的 dr_py 仓库），命中就在诊断里写
+`ext 改用镜像：<url>`；全失败则明确告诉你「直接原因在上游」。
+
 ## 七、安装到 iPhone
 
 | 方式 | 有效期 | 条件 |

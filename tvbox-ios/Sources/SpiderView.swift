@@ -20,7 +20,20 @@ struct SpiderWebView: View {
     var body: some View {
         VStack(spacing: 0) {
             if let initError {
-                DiagnosticView(text: initError)
+                DiagnosticView(
+                    text: initError,
+                    onNextSite: {
+                        state.markDead(site.key)
+                        if state.switchToNextSite() == nil {
+                            // 全被标死了：清空标记，让用户还能自己挑
+                            state.deadSiteKeys.removeAll()
+                        }
+                    },
+                    onRetry: {
+                        self.initError = nil
+                        Task { await boot() }
+                    }
+                )
             } else if spider == nil {
                 VStack(spacing: 12) {
                     ProgressView()
@@ -176,6 +189,9 @@ struct SpiderWebView: View {
 /// 站点不可用时的诊断面板：内容可选、可复制，直接发出来就能定位
 struct DiagnosticView: View {
     let text: String
+    /// 站点跑不起来时最有用的一步：直接跳到另一个站点
+    var onNextSite: (() -> Void)? = nil
+    var onRetry: (() -> Void)? = nil
 
     var body: some View {
         ScrollView {
@@ -191,6 +207,32 @@ struct DiagnosticView: View {
                     .foregroundColor(.secondary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
+
+                if onNextSite != nil || onRetry != nil {
+                    HStack(spacing: 10) {
+                        if let onRetry {
+                            Button(action: onRetry) {
+                                Text("重试")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .padding(.horizontal, 14).padding(.vertical, 8)
+                                    .background(Color(white: 0.18))
+                                    .foregroundColor(.primary)
+                                    .cornerRadius(8)
+                            }
+                        }
+                        if let onNextSite {
+                            Button(action: onNextSite) {
+                                Text("换下一个可用站点")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .padding(.horizontal, 14).padding(.vertical, 8)
+                                    .background(Color.accentColor)
+                                    .foregroundColor(.white)
+                                    .cornerRadius(8)
+                            }
+                        }
+                    }
+                    .padding(.top, 4)
+                }
             }
             .padding(16)
         }

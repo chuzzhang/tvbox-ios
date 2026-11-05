@@ -83,7 +83,9 @@ enum Drpy {
             extURL = URLKit.resolve(extBody, base: base)
             notes.append("ext 规则：\(extURL)")
             do {
-                let data = try await Net.shared.fetchScriptData(extURL)
+                let got = try await Net.shared.fetchScriptTracked(extURL)
+                let data = got.data
+                if let m = got.mirror { notes.append("ext 改用镜像：\(m)") }
                 if let s = String(data: data, encoding: .utf8) {
                     extBody = s
                 } else {
@@ -92,6 +94,7 @@ enum Drpy {
                 }
             } catch {
                 notes.append("ext 规则下载失败：\(error.localizedDescription)")
+                notes.append("这条是上游问题：规则文件在服务器上已经取不到（401/404），客户端拿不到规则就组不出脚本")
                 return (nil, notes)
             }
         }
@@ -108,10 +111,11 @@ enum Drpy {
         // 下不到（401 / 404）不影响，内置解释器接管。
         var libScript: String? = nil
         if apiURL.lowercased().hasPrefix("http"), apiURL.lowercased().contains(".js") {
-            if let data = try? await Net.shared.fetchScriptData(apiURL),
-               let text = String(data: data, encoding: .utf8), text.count > 2048 {
+            if let got = try? await Net.shared.fetchScriptTracked(apiURL),
+               let text = String(data: got.data, encoding: .utf8), text.count > 2048 {
                 libScript = text
-                notes.append("已加载 drpy 官方库 \(text.count / 1024) KB")
+                let where_ = got.mirror == nil ? "原始地址" : "镜像"
+                notes.append("已加载 drpy 官方库 \(text.count / 1024) KB（\(where_)）")
             } else {
                 notes.append("drpy 官方库没下到（401/404），用内置解释器执行规则")
             }
@@ -119,15 +123,20 @@ enum Drpy {
 
         // ext 是 js 规则：规则写在 js 里，通常还依赖 cat 系的工具函数
         if !trimmed.hasPrefix("{") {
-            if trimmed.contains("homeContent") || trimmed.contains("var rule") || trimmed.contains("function") {
+            let jsLike = trimmed.contains("homeContent")
+                || trimmed.contains("var rule") || trimmed.contains("const rule") || trimmed.contains("let rule")
+                || trimmed.contains("class_name") || trimmed.contains("function range(")
+                || trimmed.hasPrefix("rule") || trimmed.contains("rule={") || trimmed.contains("rule = {")
+            if jsLike {
                 var scripts: [String] = []
                 if let libScript { scripts.append(libScript) }
                 scripts.append(trimmed)
+                // js 规则只给规则对象，homeContent/categoryContent 由解释器按规则生成
                 scripts.append(lite)
-                notes.append("ext 是 js 规则（\(trimmed.count / 1024) KB）")
+                notes.append("ext 是 js 规则（\(trimmed.count / 1024) KB），解释器接管 4 个入口")
                 return (Result(scripts: scripts, source: "drpy:ext.js", note: "ext.js"), notes)
             }
-            notes.append("ext 既不是 JSON 规则也不是 js（前 40 字：\(trimmed.prefix(40))）")
+            notes.append("ext 既不是 JSON 规则也不是 js（前 60 字：\(trimmed.prefix(60))）")
             return (nil, notes)
         }
 

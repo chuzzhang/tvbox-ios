@@ -131,7 +131,14 @@ struct FeedView: View {
             }
 
             if let err {
-                DiagnosticView(text: err)
+                DiagnosticView(
+                    text: err,
+                    onNextSite: { state.switchToNextSite() },
+                    onRetry: {
+                        self.err = nil
+                        Task { await boot() }
+                    }
+                )
             } else {
                 ScrollView {
                     LazyVGrid(columns: cols, spacing: 14) {

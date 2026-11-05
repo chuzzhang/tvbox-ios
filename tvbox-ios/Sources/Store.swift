@@ -23,6 +23,9 @@ final class AppState: ObservableObject {
     init() {
         history = Self.loadList("list.history")
         favorites = Self.loadList("list.fav")
+        if let dead = UserDefaults.standard.array(forKey: "site.dead") as? [String] {
+            deadSiteKeys = Set(dead)
+        }
         if !configText.isEmpty {
             Task { await refreshConfig(silent: true) }
         }
@@ -62,9 +65,11 @@ final class AppState: ObservableObject {
             config = cfg
             ud.set(configText, forKey: "cfg.url")
             if selectedSiteKey == nil {
-                // 优先落到 CMS 站：脚本站在 iOS 上受 jar 限制，CMS 站基本都能出内容
-                let usable = (cfg.sites ?? []).filter { $0.isUsable }
-                selectedSiteKey = (usable.first { $0.isCMSRoute } ?? usable.first)?.key
+                // 优先落到 CMS 站：脚本站在 iOS 上受 jar/规则限制，CMS 站基本都能出内容
+                let all = (cfg.sites ?? []).filter { $0.isUsable }
+                let alive = all.filter { !deadSiteKeys.contains($0.key) }
+                let pool = alive.isEmpty ? all : alive
+                selectedSiteKey = (pool.first { $0.isCMSRoute } ?? pool.first)?.key
             }
 
             // 顶层 spider 后台加载，不挡住配置显示
@@ -83,6 +88,30 @@ final class AppState: ObservableObject {
 
     func select(_ site: Site) {
         selectedSiteKey = site.key
+    }
+
+    /// 已经确认跑不起来的站点（脚本 401/404、缺 dex 等），本地记着，免得每次自动落到它身上
+    @Published var deadSiteKeys: Set<String> = []
+
+    func markDead(_ key: String) {
+        deadSiteKeys.insert(key)
+        ud.set(Array(deadSiteKeys), forKey: "site.dead")
+    }
+
+    /// 换到下一个能用的站点：先看 CMS 站（成功率最高），再退到没被标记的脚本站
+    @discardableResult
+    func switchToNextSite() -> Site? {
+        let alive = sites.filter { !deadSiteKeys.contains($0.key) }
+        let cms = alive.filter { $0.isCMSRoute }
+        if let s = cms.first(where: { $0.key != selectedSiteKey }) {
+            selectedSiteKey = s.key
+            return s
+        }
+        if let s = alive.first(where: { $0.key != selectedSiteKey }) {
+            selectedSiteKey = s.key
+            return s
+        }
+        return nil
     }
 
     // MARK: - 历史 / 收藏

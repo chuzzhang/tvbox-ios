@@ -83,7 +83,9 @@ enum ScriptResolver {
             let lower = api.lowercased()
             if lower.contains(".js") {
                 do {
-                    let data = try await Net.shared.fetchScriptData(api)
+                    let got = try await Net.shared.fetchScriptTracked(api)
+                    if let m = got.mirror { notes.append("站点脚本改用镜像：\(m)") }
+                    let data = got.data
                     let text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
                     if !text.isEmpty {
                         if Drpy.looksLikeRule(text) || Drpy.isFramework(api) {
@@ -109,7 +111,9 @@ enum ScriptResolver {
                 }
             } else if lower.contains(".jar") {
                 do {
-                    let data = try await Net.shared.fetchScriptData(api)
+                    let got = try await Net.shared.fetchScriptTracked(api)
+                    if let m = got.mirror { notes.append("站点 jar 改用镜像：\(m)") }
+                    let data = got.data
                     let ex = SpiderStore.extract(data, preferKey: site.key)
                     if !ex.scripts.isEmpty {
                         notes.append("站点 jar 内抽到 \(ex.scripts.count) 段 js：\(ex.jsNames.prefix(3).joined(separator: ", "))")
@@ -147,11 +151,19 @@ enum ScriptResolver {
         }
 
         notes.append("—— 结论：这个站点在 iOS 上缺可执行的脚本")
-        if extText.isEmpty && site.type == 3 {
+        // 把「上游文件没了」和「客户端实现不了」分开写，不然永远在猜
+        let upstreamGone = notes.contains { $0.contains("HTTP 401") || $0.contains("HTTP 404") }
+        if upstreamGone {
+            notes.append("直接原因在上游：规则/脚本文件在服务器上已取不到（401 鉴权或 404 不存在），")
+            notes.append("用 Android 版 TVBox 打开同一站点也是同样的报错。换站点或换配置，改客户端没有用。")
+        }
+        if extText.isEmpty && site.type == 3 && !upstreamGone {
             notes.append("站点既没有 js/jar 直链，也没有 ext 规则；它的实现应该在顶层 spider 的 dex 里。")
         }
-        notes.append("纯 dex 的 jar spider 需要 Android 运行时（ART），iOS 没有对应实现；")
-        notes.append("换成 CMS 站点（type 0/1）、js spider 站点、或带 ext 规则的 drpy 站点才能用。")
+        if !upstreamGone {
+            notes.append("纯 dex 的 jar spider 需要 Android 运行时（ART），iOS 没有对应实现；")
+            notes.append("换成 CMS 站点（type 0/1）、js spider 站点、或带 ext 规则的 drpy 站点才能用。")
+        }
         throw NetError.decode("站点「\(site.name)」没有可执行的脚本", notes.joined(separator: "\n"))
     }
 

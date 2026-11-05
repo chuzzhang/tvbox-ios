@@ -141,7 +141,7 @@ function _collect(html, sel) {
         }
     }
     var els = [];
-    try { els = pdfa(html, css) || []; } catch (e) { els = []; }
+    try { els = pdfa(html, _css(css)) || []; } catch (e) { els = []; }
     var out = [];
     for (var k = 0; k < els.length; k++) {
         var v;
@@ -151,6 +151,14 @@ function _collect(html, sel) {
         out.push(v || '');
     }
     return out;
+}
+
+/* 规则里的选择器常写成 `body&&.list .item`，pdfa 不认 body&& 前缀 */
+function _css(s) {
+    var t = String(s || '').replace(/^\s+|\s+$/g, '');
+    t = t.replace(/^body\s*&&\s*/i, '');
+    if (!t || t === 'body') return 'body';
+    return t;
 }
 
 function _split(spec) {
@@ -200,8 +208,18 @@ function _headers() {
 
 function _get(url) {
     if (!url) return '';
+    var h = _headers();
+    // 规则没写 Referer 时补站点主页：不少源站只校验 Referer
+    var hasRef = false;
+    for (var k in h) {
+        if (/^referer$/i.test(k) && h[k]) { hasRef = true; break; }
+    }
+    if (!hasRef) {
+        var host = _host();
+        if (host) h['Referer'] = host + '/';
+    }
     try {
-        var body = request(url, { headers: _headers() });
+        var body = request(url, { headers: h });
         return body ? String(body) : '';
     } catch (e) {
         return '';
@@ -249,8 +267,46 @@ function _navLinks(html) {
     return out;
 }
 
+/*
+ * drpy 的 js 规则（ext 是 xxx.js）用的是英文字段：
+ *   class_name: ['电影','剧集']      class_url: ['1','2'] 或 '/vodtype/fyclass.html'
+ *   url: '/vodshow/fyclass--------fypage---.html'
+ *   searchUrl: '/vodsearch/-------------.html?wd=**&page=fypage'
+ * 这类规则在中文 JSON 规则里没有对应字段，必须单独认，否则首页分类永远是空的。
+ */
+function _classFromArrays(r) {
+    var names = _pick(r, ['class_name', 'class_names', 'className']);
+    if (!names || typeof names !== 'object' || !names.length) return null;
+
+    var urls = _pick(r, ['class_url', 'class_urls', 'classUrl']);
+    var exclude = _s(_pick(r, ['cate_exclude', 'cateExclude', 'exclude']));
+    var skip = exclude ? exclude.split(/[|,]/) : [];
+
+    var out = [];
+    for (var i = 0; i < names.length; i++) {
+        var n = _s(names[i]).replace(/^\s+|\s+$/g, '');
+        if (!n) continue;
+        var drop = false;
+        for (var k = 0; k < skip.length; k++) {
+            if (skip[k] && n.indexOf(skip[k]) >= 0) { drop = true; break; }
+        }
+        if (drop) continue;
+
+        var u = '';
+        if (urls && typeof urls === 'object' && urls.length) u = _s(urls[i]);
+        else if (typeof urls === 'string' && urls) u = urls;
+        if (!u) u = n;
+        out.push({ type_name: n, type_id: u });
+    }
+    return out.length ? out : null;
+}
+
 function homeContent(filter) {
     var r = _rules();
+
+    var byArrays = _classFromArrays(r);
+    if (byArrays) return { class: byArrays };
+
     var cateRaw = _pick(r, ['分类', 'class', '分类数据', 'categories', 'class_parse']);
 
     if (cateRaw && typeof cateRaw === 'object' && cateRaw.length) {
@@ -304,7 +360,7 @@ function _fillCate(tpl, tid, pg) {
 function _rows(html, specStr) {
     var p = _split(specStr);
     if (!p.length) return [];
-    var parent = (!p[0] || p[0] === '*') ? 'body' : p[0];
+    var parent = (!p[0] || p[0] === '*') ? 'body' : _css(p[0]);
     var blocks = [];
     try { blocks = pdfa(html, parent) || []; } catch (e) { blocks = []; }
     var out = [];
@@ -327,7 +383,8 @@ function categoryContent(tid, pg, quick, filter) {
     var tpl = _s(_pick(r, ['分类url', 'url', '分类链接', 'cateUrl', 'cate_url', '列表url']));
     var url = '';
     if (/^https?:\/\//i.test(tid)) url = tid;
-    else if (tpl) url = _fillCate(tpl, tid, pg);
+    // 规则的 url 模板几乎都是相对路径（/vodshow/fyclass...），必须补 host
+    else if (tpl) url = _abs(_fillCate(tpl, tid, pg));
     else url = _abs(_fillCate(tid, tid, pg));
 
     var html = _get(url);
@@ -368,7 +425,7 @@ function _meta(html, prop) {
 function _ruleLines(html, sp) {
     if (sp.length < 5 || !sp[4]) return [];
     var containers = [];
-    try { containers = pdfa(html, sp[4]) || []; } catch (e) { containers = []; }
+    try { containers = pdfa(html, _css(sp[4])) || []; } catch (e) { containers = []; }
     var out = [];
     for (var i = 0; i < containers.length; i++) {
         var c = containers[i];
@@ -534,6 +591,19 @@ _export('categoryContent', categoryContent);
 _export('detailContent', detailContent);
 _export('searchContent', searchContent);
 if (typeof __G.init !== 'function') { __G.init = init; }
+if (typeof __G.getHtml !== 'function') { __G.getHtml = _get; }
 if (typeof __G.rule === 'undefined') { __G.rule = _rules(); }
+
+/*
+ * js 规则文件里常直接引用 MOBILE_UA / PC_UA 这些常量（原版由 drpy 库里定义）。
+ * 函数体是在调用时才解析标识符的，所以库没下到时在这里补默认值仍然生效。
+ */
+if (typeof __G.MOBILE_UA === 'undefined') {
+    __G.MOBILE_UA = 'Mozilla/5.0 (Linux; Android 12; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
+}
+if (typeof __G.PC_UA === 'undefined') {
+    __G.PC_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+}
+if (typeof __G.UA === 'undefined') { __G.UA = __G.MOBILE_UA; }
 
 })(this);
