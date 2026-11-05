@@ -43,14 +43,33 @@ jobs:
       - name: 规则解释器单测
         working-directory: tvbox-ios
         run: |
-          if command -v node >/dev/null 2>&1; then
-            for f in tests/*.test.js; do
-              echo "→ $f"
-              node "$f"
-            done
-          else
+          # 不用 glob：文件缺一个就把字面量 tests/*.test.js 丢给 node，报 MODULE_NOT_FOUND。
+          # 逐个点名，缺文件只提示不中断，免得测试目录没同步上去整个包出不掉。
+          set +e
+          if ! command -v node >/dev/null 2>&1; then
             echo "没有 node，跳过（不影响出包）"
+            exit 0
           fi
+          node -v
+          ran=""
+          missing=""
+          for f in drpy_lite.test.js drpy_jsrule.test.js drpy_classparse.test.js; do
+            if [ -f "tests/$f" ]; then
+              echo "→ tests/$f"
+              node "tests/$f"
+              if [ $? -ne 0 ]; then
+                echo "❌ tests/$f 未通过"
+                exit 1
+              fi
+              ran="$ran $f"
+            else
+              echo "跳过（仓库里没有）：tests/$f"
+              missing="$missing $f"
+            fi
+          done
+          echo "已跑：${ran:- 无}"
+          [ -n "$missing" ] && echo "缺失：$missing（重新解压源码包可补齐）"
+          exit 0
 
       - name: 生成工程
         working-directory: tvbox-ios
