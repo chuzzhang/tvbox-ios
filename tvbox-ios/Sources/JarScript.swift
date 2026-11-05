@@ -178,6 +178,12 @@ enum ScriptResolver {
                 return Resolved(scripts: b.scripts, source: b.source,
                                 diagnostics: notes.joined(separator: "\n"))
             }
+            // 加固包（.guard + wexguard_*.so）：包里的 dex 是空壳，真逻辑在加密段里。
+            // 这种情况再往下走只会落到「缺可执行脚本」，对排查没有帮助，直接给结论。
+            if GuardSites.hasGuardPayload(sp.entries) || (GuardSites.isGuard(api: apiRaw) && !sp.entries.isEmpty) {
+                notes.append(contentsOf: GuardSites.verdict(entries: sp.entries, dex: []))
+                throw NetError.decode("站点「\(site.name)」跑在加固 spider 包里", notes.joined(separator: "\n"))
+            }
         } else {
             notes.append("顶层 spider 尚未加载")
         }
@@ -195,6 +201,10 @@ enum ScriptResolver {
         if upstreamGone {
             notes.append("直接原因在上游：规则/脚本文件在服务器上已取不到（401 鉴权或 404 不存在），")
             notes.append("用 Android 版 TVBox 打开同一站点也是同样的报错。换站点或换配置，改客户端没有用。")
+        }
+        if GuardSites.isGuard(api: apiRaw) {
+            notes.append("站点 api `\(apiRaw)` 是加固壳的类名（Wex / AI 卫士系），真逻辑在顶层 spider 包的 .guard 加密段里，")
+            notes.append("dex 里那 143 个 XxxGuard 类是空的，接口地址反编译不出来。")
         }
         if extText.isEmpty && site.type == 3 && !upstreamGone {
             notes.append("站点既没有 js/jar 直链，也没有 ext 规则；它的实现应该在顶层 spider 的 dex 里。")
