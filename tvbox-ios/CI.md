@@ -205,7 +205,20 @@ TVBox/xxx.swift:42:12: error: value of optional type 'JSValue?' must be unwrappe
 | `error: An empty identity is not valid` | 签名参数丢了 |
 | `** ARCHIVE FAILED **` 但没有任何 `error:` | 看尾部 50 行的 `xcodebuild: error:` 或 `note:` 行 |
 
-**Swift 编译报错** — 这类是真问题，本机没有 Swift 工具链验证不了类型。修过的几处（`JSValue(undefinedIn:)` 是可失败构造、`UIView.layerClass` 要用 `class` 不能用 `static`、`ForEach` 元素是元组时不能拆成两个闭包参数）都属于这一层，说明确实只有 CI 能兜住类型检查。
+**`initializer for conditional binding must have Optional type, not 'String'`**
+
+`try?` 从 Swift 5 起会做扁平化：`try? expr` 里 `expr` 本来是 `String?`，结果仍是 `String?`，`if let d = try? ...` 绑出来的 `d` 就是 **`String`**。再写一次 `let v = d` 就是对非可选值条件绑定。
+
+```swift
+// 错
+if let d = try? c.decodeIfPresent(String.self, forKey: k), let v = d, !v.isEmpty { }
+// 对
+if let v = try? c.decodeIfPresent(String.self, forKey: k), !v.isEmpty { }
+```
+
+注意区分：`try?` 作用在**返回非可选**的 throwing 函数上时（如 `c.decode(T.self)`），结果才是真正的 `T?`；只有原返回类型本身是 Optional，才会出现这个坑。
+
+**Swift 编译报错** — 这类是真问题，本机没有 Swift 工具链验证不了类型。修过的几处（`JSValue(undefinedIn:)` 是可失败构造、`UIView.layerClass` 要用 `class` 不能用 `static`、`ForEach` 元素是元组时不能拆成两个闭包参数、`try?` 扁平化后不能再二次绑定）都属于这一层，说明确实只有 CI 能兜住类型检查。
 
 ---
 

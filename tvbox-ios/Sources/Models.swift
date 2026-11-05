@@ -87,8 +87,9 @@ struct BoxConfig: Codable {
     }
 
     private static func str(_ c: KeyedDecodingContainer<BoxKeys>, _ k: BoxKeys) -> String? {
-        if let d = try? c.decodeIfPresent(String.self, forKey: k), let v = d, !v.isEmpty { return v }
-        if let d = try? c.decodeIfPresent(Int.self, forKey: k), let v = d { return String(v) }
+        // try? 已经做过扁平化，绑定结果就是 String，不能再写 let v = d
+        if let v = try? c.decodeIfPresent(String.self, forKey: k), !v.isEmpty { return v }
+        if let v = try? c.decodeIfPresent(Int.self, forKey: k) { return String(v) }
         return nil
     }
 
@@ -180,16 +181,16 @@ struct Site: Codable, Identifiable {
     }
 
     private static func str(_ c: KeyedDecodingContainer<SiteKeys>, _ k: SiteKeys) -> String? {
-        if let d = try? c.decodeIfPresent(String.self, forKey: k), let v = d, !v.isEmpty { return v }
-        if let d = try? c.decodeIfPresent(Int.self, forKey: k), let v = d { return String(v) }
-        if let d = try? c.decodeIfPresent(Double.self, forKey: k), let v = d { return String(v) }
+        if let v = try? c.decodeIfPresent(String.self, forKey: k), !v.isEmpty { return v }
+        if let v = try? c.decodeIfPresent(Int.self, forKey: k) { return String(v) }
+        if let v = try? c.decodeIfPresent(Double.self, forKey: k) { return String(v) }
         return nil
     }
 
     /// type 在部分配置里被写成字符串 "1"
     private static func int(_ c: KeyedDecodingContainer<SiteKeys>, _ k: SiteKeys) -> Int? {
-        if let d = try? c.decodeIfPresent(Int.self, forKey: k), let v = d { return v }
-        if let d = try? c.decodeIfPresent(String.self, forKey: k), let s = d,
+        if let v = try? c.decodeIfPresent(Int.self, forKey: k) { return v }
+        if let s = try? c.decodeIfPresent(String.self, forKey: k),
            let v = Int(s.trimmingCharacters(in: .whitespaces)) { return v }
         return nil
     }
