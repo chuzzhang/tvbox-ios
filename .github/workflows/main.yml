@@ -59,9 +59,14 @@ jobs:
         working-directory: tvbox-ios
         run: xcodebuild -resolvePackageDependencies -project TVBox.xcodeproj -scheme TVBox
 
+      # 关键：整段编译输出落到 build.log，失败时把 error: 行单独打出来。
+      # 否则 Actions 折叠日志后只剩 "exit code 65" 一行，没法定位。
       - name: Archive（无签名）
         working-directory: tvbox-ios
         run: |
+          set +e
+          rm -rf build
+          mkdir -p build
           xcodebuild archive \
             -project TVBox.xcodeproj \
             -scheme TVBox \
@@ -69,9 +74,32 @@ jobs:
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -archivePath build/TVBox.xcarchive \
+            -derivedDataPath build/dd \
+            -resultBundlePath build/TVBox.xcresult \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY=""
+            CODE_SIGN_IDENTITY="" \
+            > build.log 2>&1
+          STATUS=$?
+          echo "xcodebuild 退出码：$STATUS"
+          echo "================ 编译错误 ================"
+          grep -n "error:" build.log | head -80 || echo "（日志中没有 error: 行，说明失败发生在链接/签名/打包阶段）"
+          echo "================ 失败原因 ================"
+          grep -nE "^(\*\* |error|fatal|clang: error|ld: )" build.log | head -40 || true
+          echo "================ 日志尾部 50 行 ================"
+          tail -50 build.log
+          exit $STATUS
+
+      - name: 上传编译日志
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TVBox-build-log
+          path: |
+            tvbox-ios/build.log
+            tvbox-ios/build/TVBox.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: 打包 ipa
         working-directory: tvbox-ios
