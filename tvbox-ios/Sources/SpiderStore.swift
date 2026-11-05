@@ -151,6 +151,8 @@ final class SpiderStore {
         var scripts: [String] = []
         var jsNames: [String] = []
         var entries: [String] = []
+        /// 包里每个 classes.dex 的类名与依赖画像，用于诊断「这个 jar 到底带了什么」
+        var dex: [DexInfo] = []
     }
 
     /// 从 jar/zip 里抽 js。`preferKey` 命中的文件名优先（多 js 的包里按站点 key 挑）
@@ -165,6 +167,19 @@ final class SpiderStore {
 
         for entry in archive where entry.type == .file {
             out.entries.append(entry.path)
+
+            // dex 顺手解析一遍：不执行，只读类名表。解不动就当没有，不影响后面的 js
+            if entry.path.lowercased().hasSuffix(".dex") {
+                guard entry.uncompressedSize > 0,
+                      entry.uncompressedSize < 32 * 1024 * 1024 else { continue }
+                var dexBuf = Data()
+                if (try? archive.extract(entry) { dexBuf.append($0) }) != nil,
+                   let info = DexInfo.scan(dexBuf) {
+                    out.dex.append(info)
+                }
+                continue
+            }
+
             guard entry.path.lowercased().hasSuffix(".js") else { continue }
             guard entry.uncompressedSize > 0, entry.uncompressedSize < 16 * 1024 * 1024 else { continue }
             var buf = Data()
@@ -207,9 +222,19 @@ final class SpiderStore {
         rep.jsNames = ex.jsNames
 
         guard !ex.scripts.isEmpty else {
-            let dex = ex.entries.filter { $0.lowercased().hasSuffix(".dex") }.count
-            rep.message = "\(source) 里共 \(ex.entries.count) 个文件，没有 js；"
-                + "其中 \(dex) 个 dex 字节码 —— dex 要 Android ART 才能执行，iOS 加载不了"
+            let dexCount = ex.entries.filter { $0.lowercased().hasSuffix(".dex") }.count
+            var msg = "\(source) 里共 \(ex.entries.count) 个文件，没有 js；"
+                + "其中 \(dexCount) 个 dex 字节码 —— dex 要 Android ART 才能执行，iOS 加载不了"
+            if let d = ex.dex.first {
+                let cls = d.siteClasses
+                msg += "\n包内 \(d.classNames.count) 个类 / \(d.methodCount) 个方法"
+                if !cls.isEmpty {
+                    msg += "\n站点类：" + cls.prefix(10).joined(separator: ", ")
+                        + (cls.count > 10 ? " …共 \(cls.count) 个" : "")
+                }
+                msg += "\n外部依赖：" + d.dependencyLine
+            }
+            rep.message = msg
             return rep
         }
 

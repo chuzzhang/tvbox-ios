@@ -61,7 +61,33 @@ enum ScriptResolver {
             notes.append("ext=\(brief)")
         }
 
-        // 1 / 2) drpy 规则站点
+        // 1) Pyramid（python 版 TVBox）：api 是 `py_xxx`，规则或脚本在 ext 里。
+        //    规则型和 drpy 同源（htmlParser.py 的 pdfa/pdfh/pd 与 cat.js 是一套），
+        //    解释器直接吃；脚本型是完整的 .py 程序，要 CPython。
+        if site.isPyramid {
+            notes.append("pyramid 站点（python 版 TVBox 的规则体系，api 不是 URL）")
+            let pyScriptLike = extText.lowercased().hasSuffix(".py")
+                || (extText.contains("import ") && extText.contains("def ")
+                    && !extText.hasPrefix("{"))
+            if pyScriptLike {
+                notes.append("ext 是 python 脚本：iOS 没有 CPython 运行时，也没有 lxml/pyquery/requests 那套依赖")
+                notes.append("把这段 .py 的逻辑改写成等价 js 规则（或换同源的 js 版站点）才能在本机跑")
+                throw NetError.decode("站点「\(site.name)」是 python 脚本站点", notes.joined(separator: "\n"))
+            }
+            if extText.isEmpty {
+                notes.append("站点没给 ext —— pyramid 站点靠 ext 承载规则，缺了在 Android 上同样跑不起来")
+            } else {
+                let attempt = await Drpy.load(site: site, apiURL: "", base: base)
+                notes.append(contentsOf: attempt.notes)
+                if let r = attempt.result {
+                    notes.append("脚本来源：\(r.source)")
+                    return Resolved(scripts: r.scripts, source: r.source,
+                                    diagnostics: notes.joined(separator: "\n"))
+                }
+            }
+        }
+
+        // 2 / 3) drpy 规则站点
         let extIsRuleFile = URLKit.looksLikeURL(extText) && !extText.hasPrefix("{")
             && (extText.lowercased().contains(".json") || extText.lowercased().contains(".js"))
         let extIsJSON = extText.hasPrefix("{")
@@ -120,8 +146,21 @@ enum ScriptResolver {
                         return Resolved(scripts: ex.scripts, source: "site.jar",
                                         diagnostics: notes.joined(separator: "\n"))
                     }
-                    let dex = ex.entries.filter { $0.lowercased().hasSuffix(".dex") }.count
-                    notes.append("站点 jar 内 \(ex.entries.count) 个文件，没有 js（dex \(dex) 个）")
+                    let dexCount = ex.entries.filter { $0.lowercased().hasSuffix(".dex") }.count
+                    notes.append("站点 jar 内 \(ex.entries.count) 个文件，没有 js（dex \(dexCount) 个）")
+                    for info in ex.dex {
+                        notes.append("包内 \(info.classNames.count) 个类 / \(info.methodCount) 个方法"
+                            + (info.obscuredCount > 0 ? "（\(info.obscuredCount) 个是混淆后的 jsoup）" : ""))
+                        let cls = info.siteClasses
+                        if !cls.isEmpty {
+                            notes.append("jar 支持的站点类：" + cls.prefix(12).joined(separator: ", ")
+                                + (cls.count > 12 ? " …共 \(cls.count) 个" : ""))
+                        }
+                        notes.append("dex 外部依赖：" + info.dependencyLine)
+                        notes.append(info.isPlainJava
+                            ? "依赖面只有标准库，站点逻辑可以被 js 重写"
+                            : "依赖了第三方网络库/并发框架，iOS 上无法靠 js 替代执行")
+                    }
                 } catch {
                     notes.append("站点 jar 下载失败：\(error.localizedDescription)")
                 }
@@ -161,8 +200,9 @@ enum ScriptResolver {
             notes.append("站点既没有 js/jar 直链，也没有 ext 规则；它的实现应该在顶层 spider 的 dex 里。")
         }
         if !upstreamGone {
-            notes.append("纯 dex 的 jar spider 需要 Android 运行时（ART），iOS 没有对应实现；")
-            notes.append("换成 CMS 站点（type 0/1）、js spider 站点、或带 ext 规则的 drpy 站点才能用。")
+            notes.append("classes.dex 是 Dalvik 指令集，要 ART 运行时；iOS 只有 arm64 Mach-O 且禁 JIT，")
+            notes.append("所以 jar 里带 js 的能用，只有 dex 的不能用。")
+            notes.append("换成 CMS 站点（type 0/1）、js spider 站点、或带 ext 规则的 drpy 站点。")
         }
         throw NetError.decode("站点「\(site.name)」没有可执行的脚本", notes.joined(separator: "\n"))
     }

@@ -151,6 +151,168 @@ push 完 Actions 自动跑 `build-ipa`（`macos-14`），6～9 分钟出结果�
 | `0/1` CMS 接口 | ✅ 分类 / 列表 / 详情 / 搜索 / 播放 |
 | `3/4` js spider | ✅ JavaScriptCore |
 | `3/4` jar spider | ⚠️ jar 内含 js 则可用，纯 dex 不行 |
+| `py_xxx` pyramid（python 版 TVBox） | ⚠️ 规则型可用（走内置解释器），`.py` 脚本型不行 |
+
+### pyramid 站点（python 版 TVBox）
+
+`api` 形如 `py_xxx`，规则在 `ext` 里。这套体系就是 `undcover/freedom` 的 Pyramid，
+Android 端靠 Chaquopy 打进 CPython 3.8 + `base/spider.py` + `base/htmlParser.py` 跑。
+
+它的 `htmlParser.py` 里那套 `pdfa` / `pdfh` / `pd` 和 drpy 的 `cat.js` 是同一个东西，
+只是字段名用英文：
+
+| pyramid | drpy |
+|---|---|
+| `first` | `一级` |
+| `second` | `二级` |
+| `url` | `分类url` |
+| `searchUrl` | `搜索url` |
+| `class_name` / `class_url` | `分类` |
+
+所以**规则型站点直接交给内置解释器**，两种字段写法都认（数组或 `电影&剧集` 字符串）。
+`ext` 是 `.py` 文件时是完整的 Python 程序（要 `requests` / `lxml` / `pyquery` / `pycryptodome`），
+iOS 上没有对应运行时，诊断里会直接说明，不再笼统报「没有可执行的脚本」。
+
+### 站点加载链路
+
+配置顶层的 `spider` 字段现在会真正被使用。TVBox 的真实结构是：
+
+```json
+{
+  "spider": "https://x/spider.jar;md5;abc123",
+  "sites": [
+    {"key":"csp_abc","name":"某站","type":3,"api":"csp_abc"},
+    {"key":"cms1","name":"某 CMS","type":1,"api":"https://x/api.php/provide/vod/"}
+  ]
+}
+```
+
+`type 3` 站点的 `api` 是 `csp_abc` 这种标识符，不是地址 —— 脚本来自顶层 `spider`，
+不加载它就一个都跑不起来。现在的顺序是：
+
+1. 站点 api 本身是 `.js` / `.jar` → 用它
+2. 否则用顶层 `spider`（`.js` 直接跑；`.jar` 先解包抽 js，优先文件名匹配站点 key 的）
+3. 再否则用内置 `Resources/spider.js`（把脚本放进去就生效）
+
+地址后面的 `;md5;` `;pk;` 等校验后缀会先剥掉再请求。
+`key`、`ext`、`host`、`__key__`、`__ext__` 会注入 JS 全局，供 `eval(key)` 这类分派方式使用。
+
+### 页面左上角的下拉里，站点名后面带类型
+
+| 标注 | 含义 |
+|---|---|
+| `CMS` | 直接走接口，基本都能用 |
+| `js 脚本` | api 指向 js 文件 |
+| `jar 脚本` | api 指向 jar，内含 js 才可用 |
+| `jar 内置` | api 是 `csp_xxx`，脚本在顶层 jar 里；纯 dex 的 jar 不可用 |
+
+CMS 站会自动排在前面并被默认选中。
+
+### 跑不起来时
+
+页面会给出可复制的诊断，包含：spider 的下载结果、jar 内文件清单、
+站点 api / key / ext、脚本定义了哪些函数（`homeContent` / `rule` / `class_parse`…）。
+
+看到「没有 js；N 个 dex 字节码」就是遇到了硬限制，但诊断里会先把包的底细摊开：
+
+```
+站点 jar 内 2 个文件，没有 js（dex 1 个）
+包内 612 个类 / 3685 个方法（570 个是混淆后的 jsoup）
+jar 支持的站点类：AliPS, Alist, Gitcafe, IQIYI, MGTV, QQ, SP360, Upyunso, XBPQ, XBiu, XBiubiu, XPath, Yisou, Zhaozy …
+dex 外部依赖：java.lang(46) java.util(32) java.io(17) okhttp3(17) java.util.concurrent(13) rxhttp.wrapper.param(12) java.net(6) java.text(6)
+依赖了第三方网络库/并发框架，iOS 上无法靠 js 替代执行
+```
+
+判定规则很简单：
+
+| dex 画像 | 含义 |
+|---|---|
+| 最后一行是「依赖面只有标准库」 | 逻辑纯 Java，站点可以被 js 重写 |
+| 最后一行是「依赖了第三方网络库/并发框架」 | 要跑它等于重写 Dalvik VM + okhttp + 线程池，不划算 |
+| `jar 支持的站点类` 里没有你要的站点 | 这个 jar 本来就不服务那个站点，问题在配置 |
+
+**jar 不是全都跑不了**，分三类：
+
+1. jar 里打包了 `.js` → 能跑，解包抽出来交给 JSContext（`catvod` 的 js 版 spider 就是这么发的）
+2. jar 里只有 `classes.dex` + 纯标准库依赖 → 理论可移植，实际没人干
+3. jar 里只有 `classes.dex` + okhttp/rxhttp/并发框架 → iOS 上跑不了，`classes.dex` 是 Dalvik 指令集，要 ART 运行时；iOS 只有 arm64 Mach-O 且禁 JIT
+
+第 3 类要真跑起来只有两条路：把它放到一台 Android 设备或 PC 上执行、iOS 走 HTTP 调它（几十到几百行）；
+或者在 iOS 里实现 Dalvik 解释器 + 那一串依赖（几万行）。都不属于改客户端能顺手带上的量。
+
+诊断页底部有两个按钮：**重试** 和 **换下一个可用站点**。
+后者会把当前站点标记为不可用（本地记着），跳到下一个 CMS 站，下次启动也不会再自动落到它身上。
+
+### drpy 站点（api 是 drpy.min.js）
+
+这类站点的 `api` 指向**框架库**，规则在 `ext` 里，写法有两种：
+
+| ext 形态 | 处理 |
+|---|---|
+| JSON 规则（`./json/xxx.json`，中文字段 `一级`/`二级`/`分类url`） | 内置解释器直接执行 |
+| js 规则（`./js/xxx.js`，英文字段 `class_name`/`class_url`/`url`/`searchUrl` + `var rule = {}`） | 先执行规则文件，再由解释器按规则生成 4 个入口 |
+
+解释器覆盖 `homeContent` / `categoryContent` / `detailContent` / `searchContent`，
+支持 `fyclass` / `fypage` / `**` 占位符、`body&&` 前缀、`cate_exclude`、`&&Text`/`&&href`/`&&data-original` 选择器链。
+官方 `drpy.min.js` 能下到就优先用它的实现，只有它没定义的函数才由内置解释器补。
+
+分类来源按这个顺序找：
+
+1. `class_name` + `class_url` 数组（不用请求）
+2. `class_parse` 选择器链，最常见的写法：
+   `"#primary-menu li.menu-item;a&&Text;a&&href;.pro/(.*)"` — 父选择器 / 名称 / 链接 / 从链接裁出 type_id 的正则
+3. `分类` 字符串（`电影&1#剧集&2`）或数组
+4. 首页导航里带 `vodtype`/`vodshow`/`list` 的链接
+
+`class_parse` 的 type_id 是正则裁出来的，会直接拼进 `url` 模板：
+正则 `.pro/(.*)` 对 `https://ddys.pro/pro/movie` 得到 `pro/movie`，配合 `url: "/fyclass/page/fypage/"`
+拼出 `https://ddys.pro/pro/movie/page/1/`。正则没匹配上就退回整条链接。
+
+### 区分「上游挂了」和「客户端做不到」
+
+诊断里出现下面这行，说明问题不在本机：
+
+```
+HTTP 401 拒绝访问 — <url>
+（服务端开了鉴权/防盗链，换 UA、加 Referer 都无效）
+```
+
+页面请求（`GET`）失败时，日志会带上具体原因，不再只有「0 字符」：
+
+| 日志里的原因 | 含义 |
+|---|---|
+| `HTTP 502/503/504（源站上游不可用）` | 服务器自己挂了，CDN 后面没有可用节点 |
+| `HTTP 403（拒绝访问：鉴权或防盗链）` | 源站只给特定来源，或整目录加了鉴权 |
+| `HTTP 404（页面不存在）` | 规则里的路径变了，站点改版 |
+| `域名解析失败（DNS 拿不到 IP）` | 域名失效，或被运营商 DNS 污染 |
+| `连不上主机（端口不通，或被网络拦截）` | 常见于需要代理的站点 |
+| `连接超时（12 秒）` | 线路极慢或被丢包 |
+| `TLS 握手失败` | 证书异常或被中间设备拦截 |
+
+所以现在能直接分辨：`首页请求失败` 后面跟着 HTTP 码 = 源站问题；
+`class_parse 没抓到（父选择器 …，页面 N 字符）` = 页面拿到了，是选择器要调。
+
+`/dr_py/` 这类资源挂在个人资源站上，整目录 401/404 就是关站了。
+客户端会额外试一轮公开镜像（jsdelivr / raw.gitmirror 上的 dr_py 仓库），命中就在诊断里写
+`ext 改用镜像：<url>`；全失败则明确告诉你「直接原因在上游」。
+
+### 播放黑屏
+
+「列表能加载、点开是黑的」几乎都是播放地址的问题，播放前会先解析 + 探测（`Sources/PlayResolver.swift`）：
+
+| 情况 | 处理 |
+|---|---|
+| 地址是播放页：`/player/?url=https%3A%2F%2Fcdn%2F1.m3u8` | 取出 `url=` 里的真实地址 |
+| 相对路径：`/v/2024/xxx.m3u8` | 按站点地址补全 |
+| 裸请求 403（防盗链） | 带上 `Referer` + 浏览器 UA；裸请求不行就启用本地代理（`Sources/HLSLocalProxy.swift`） |
+| 返回的是 HTML 不是视频流 | 尝试配置里的 `parses` 解析接口，取回真实地址 |
+| 地址本身 404 / 失效 | 直接报「HTTP 404，文件不存在，换线路」 |
+
+iOS 上 `AVURLAssetHTTPHeaderFieldsKey` 是私有键、基本不生效，所以需要头的流走 `skd://` 本地代理：
+播放列表和分片都由 App 自己用带头的 URLSession 拉，`#EXT-X-KEY` 的密钥地址也会一并重写。
+
+15 秒还没画面就弹出「15 秒内没有画面」+ 探测记录（HTTP 码、Content-Type、是否走了解析接口），
+不再无限转圈。
 
 ## 七、安装到 iPhone
 

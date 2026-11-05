@@ -310,9 +310,13 @@ function _navLinks(html) {
  */
 function _classFromArrays(r) {
     var names = _pick(r, ['class_name', 'class_names', 'className']);
-    if (!names || typeof names !== 'object' || !names.length) return null;
+    if (!names) return null;
+    // pyramid 的规则两种写法都有：数组，或 "电影&剧集" 这种串
+    if (typeof names === 'string') names = names.split(/[&,]/);
+    if (typeof names !== 'object' || !names.length) return null;
 
     var urls = _pick(r, ['class_url', 'class_urls', 'classUrl']);
+    if (typeof urls === 'string') urls = urls.split(/[#,]/);
     var exclude = _s(_pick(r, ['cate_exclude', 'cateExclude', 'exclude']));
     var skip = exclude ? exclude.split(/[|,]/) : [];
 
@@ -497,7 +501,7 @@ function _rows(html, specStr) {
 
 function categoryContent(tid, pg, quick, filter) {
     var r = _rules();
-    var tpl = _s(_pick(r, ['分类url', 'url', '分类链接', 'cateUrl', 'cate_url', '列表url']));
+    var tpl = _s(_pick(r, ['分类url', 'url', '分类链接', 'cateUrl', 'cate_url', '列表url', 'firstUrl', 'first_url']));
     var url = '';
     if (/^https?:\/\//i.test(tid)) url = tid;
     // 规则的 url 模板几乎都是相对路径（/vodshow/fyclass...），必须补 host
@@ -507,7 +511,7 @@ function categoryContent(tid, pg, quick, filter) {
     var html = _get(url);
     if (!html) return { list: [], pagecount: pg };
 
-    var spec = _pick(r, ['一级', '列表', 'list', '一级规则', 'cate_rule', '列表规则']);
+    var spec = _pick(r, ['一级', '列表', 'list', 'first', '一级规则', 'cate_rule', '列表规则']);
     var rows = _rows(html, spec);
     var list = [];
     for (var i = 0; i < rows.length; i++) {
@@ -614,12 +618,12 @@ function detailContent(ids) {
     if (id.indexOf('$$$') > 0) id = id.split('$$$')[0];
 
     var r = _rules();
-    var tpl = _s(_pick(r, ['二级url', 'detailUrl', '详情url', 'detail_url']));
+    var tpl = _s(_pick(r, ['二级url', 'detailUrl', '详情url', 'detail_url', 'secondUrl', 'second_url']));
     var url = /^https?:\/\//i.test(id) ? id : _abs(tpl ? _fillCate(tpl, id, 1) : id);
     var html = _get(url);
     if (!html) return { list: [] };
 
-    var sp = _split(_pick(r, ['二级', '详情', 'detail', '二级规则', 'detail_rule']));
+    var sp = _split(_pick(r, ['二级', '详情', 'detail', 'second', '二级规则', 'detail_rule']));
     var name = sp[1] ? _txt(html, sp[1]) : '';
     if (!name) name = _meta(html, 'og:title') || _meta(html, 'title');
     if (!name && sp[2]) name = _txt(html, 'h1');
@@ -663,8 +667,8 @@ function searchContent(wd, quick, pg) {
     var html = _get(_abs(url));
     if (!html) return { list: [] };
 
-    var spec = _pick(r, ['搜索', '搜索规则', 'search', 'search_rule']);
-    if (!spec) spec = _pick(r, ['一级', '列表', 'list']);
+    var spec = _pick(r, ['搜索', '搜索规则', 'search', 'search_rule', 'searchRule']);
+    if (!spec) spec = _pick(r, ['一级', '列表', 'list', 'first']);
     var rows = _rows(html, spec);
     var list = [];
     for (var i = 0; i < rows.length; i++) {

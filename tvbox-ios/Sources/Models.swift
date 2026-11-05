@@ -219,12 +219,24 @@ struct Site: Codable, Identifiable {
     var isCMSRoute: Bool { effectiveType == 0 || effectiveType == 1 }
     var isSpiderRoute: Bool { effectiveType == 3 || effectiveType == 4 }
 
+    /// Pyramid（python 版 TVBox）站点：api 形如 `py_xxx`，规则或脚本在 ext 里。
+    /// 规则型和 drpy 同源，内置解释器能直接吃；脚本型（.py）要 CPython。
+    var isPyramid: Bool {
+        let a = api.trimmingCharacters(in: .whitespaces).lowercased()
+        if a.hasPrefix("py_") { return true }
+        return a.contains("pyramid")
+    }
+
     /// 给站点列表做标注，一眼看出哪个能用
     var routeLabel: String {
         if isCMSRoute { return "CMS" }
         let a = api.lowercased()
         if a.contains(".js") { return "js 脚本" }
         if a.contains(".jar") { return "jar 脚本" }
+        if isPyramid {
+            let e = Drpy.extText(ext).lowercased()
+            return e.hasSuffix(".py") ? "py 脚本" : "py 规则"
+        }
         return "jar 内置"
     }
 

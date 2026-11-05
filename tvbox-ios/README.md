@@ -151,6 +151,27 @@ push 完 Actions 自动跑 `build-ipa`（`macos-14`），6～9 分钟出结果�
 | `0/1` CMS 接口 | ✅ 分类 / 列表 / 详情 / 搜索 / 播放 |
 | `3/4` js spider | ✅ JavaScriptCore |
 | `3/4` jar spider | ⚠️ jar 内含 js 则可用，纯 dex 不行 |
+| `py_xxx` pyramid（python 版 TVBox） | ⚠️ 规则型可用（走内置解释器），`.py` 脚本型不行 |
+
+### pyramid 站点（python 版 TVBox）
+
+`api` 形如 `py_xxx`，规则在 `ext` 里。这套体系就是 `undcover/freedom` 的 Pyramid，
+Android 端靠 Chaquopy 打进 CPython 3.8 + `base/spider.py` + `base/htmlParser.py` 跑。
+
+它的 `htmlParser.py` 里那套 `pdfa` / `pdfh` / `pd` 和 drpy 的 `cat.js` 是同一个东西，
+只是字段名用英文：
+
+| pyramid | drpy |
+|---|---|
+| `first` | `一级` |
+| `second` | `二级` |
+| `url` | `分类url` |
+| `searchUrl` | `搜索url` |
+| `class_name` / `class_url` | `分类` |
+
+所以**规则型站点直接交给内置解释器**，两种字段写法都认（数组或 `电影&剧集` 字符串）。
+`ext` 是 `.py` 文件时是完整的 Python 程序（要 `requests` / `lxml` / `pyquery` / `pycryptodome`），
+iOS 上没有对应运行时，诊断里会直接说明，不再笼统报「没有可执行的脚本」。
 
 ### 站点加载链路
 
@@ -192,8 +213,32 @@ CMS 站会自动排在前面并被默认选中。
 页面会给出可复制的诊断，包含：spider 的下载结果、jar 内文件清单、
 站点 api / key / ext、脚本定义了哪些函数（`homeContent` / `rule` / `class_parse`…）。
 
-看到「没有 js；含 N 个 dex 字节码」就是遇到了硬限制：
-dex 需要 Android ART，iOS 没有对应运行时，换 CMS 站或 js spider 站才能用。
+看到「没有 js；N 个 dex 字节码」就是遇到了硬限制，但诊断里会先把包的底细摊开：
+
+```
+站点 jar 内 2 个文件，没有 js（dex 1 个）
+包内 612 个类 / 3685 个方法（570 个是混淆后的 jsoup）
+jar 支持的站点类：AliPS, Alist, Gitcafe, IQIYI, MGTV, QQ, SP360, Upyunso, XBPQ, XBiu, XBiubiu, XPath, Yisou, Zhaozy …
+dex 外部依赖：java.lang(46) java.util(32) java.io(17) okhttp3(17) java.util.concurrent(13) rxhttp.wrapper.param(12) java.net(6) java.text(6)
+依赖了第三方网络库/并发框架，iOS 上无法靠 js 替代执行
+```
+
+判定规则很简单：
+
+| dex 画像 | 含义 |
+|---|---|
+| 最后一行是「依赖面只有标准库」 | 逻辑纯 Java，站点可以被 js 重写 |
+| 最后一行是「依赖了第三方网络库/并发框架」 | 要跑它等于重写 Dalvik VM + okhttp + 线程池，不划算 |
+| `jar 支持的站点类` 里没有你要的站点 | 这个 jar 本来就不服务那个站点，问题在配置 |
+
+**jar 不是全都跑不了**，分三类：
+
+1. jar 里打包了 `.js` → 能跑，解包抽出来交给 JSContext（`catvod` 的 js 版 spider 就是这么发的）
+2. jar 里只有 `classes.dex` + 纯标准库依赖 → 理论可移植，实际没人干
+3. jar 里只有 `classes.dex` + okhttp/rxhttp/并发框架 → iOS 上跑不了，`classes.dex` 是 Dalvik 指令集，要 ART 运行时；iOS 只有 arm64 Mach-O 且禁 JIT
+
+第 3 类要真跑起来只有两条路：把它放到一台 Android 设备或 PC 上执行、iOS 走 HTTP 调它（几十到几百行）；
+或者在 iOS 里实现 Dalvik 解释器 + 那一串依赖（几万行）。都不属于改客户端能顺手带上的量。
 
 诊断页底部有两个按钮：**重试** 和 **换下一个可用站点**。
 后者会把当前站点标记为不可用（本地记着），跳到下一个 CMS 站，下次启动也不会再自动落到它身上。
