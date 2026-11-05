@@ -232,13 +232,32 @@ function _get(url) {
     try {
         var body = request(url, { headers: h });
         body = body ? String(body) : '';
-        _log('GET ' + url + ' → ' + body.length + ' 字符');
+        if (body) {
+            _log('GET ' + url + ' → ' + body.length + ' 字符');
+        } else {
+            _log('GET ' + url + ' → 0 字符（' + _why(url) + '）');
+        }
         _pageCache[url] = body;
         return body;
     } catch (e) {
         _log('GET ' + url + ' → 异常 ' + (e && e.message ? e.message : e));
         return '';
     }
+}
+
+/* 请求失败的具体原因：原生桥会把 HTTP 状态/网络错误记下来，没记就按空响应算 */
+function _why(url) {
+    var w = '';
+    try {
+        if (typeof __httpNote === 'function') w = String(__httpNote(url) || '');
+    } catch (e) { w = ''; }
+    if (!w) w = '空响应';
+    var host = _host();
+    // 已知会换域名的站：把备用域名一并写出来，省得对着「0 字符」猜
+    if (/\/\/ddys\./i.test(host) || /ddys\.(pro|io|tv|app|one|beauty|buzz|store|live)/i.test(host)) {
+        w += '；该站备用域名（官网 ddys.live 公布）：ddys.io / ddys.beauty / ddys.buzz / ddys.store';
+    }
+    return w;
 }
 
 /* ---------------- 首页分类 ---------------- */
@@ -390,12 +409,17 @@ function homeContent(filter) {
     if (cp && cp.indexOf(';') > 0) {
         var home = _homeURL(r);
         var hHtml = _get(home);
-        var byParse = _parseClassSelector(cp, hHtml);
-        if (byParse.length) {
-            _log('分类来源：class_parse（' + byParse.length + ' 项）');
-            return { class: byParse };
+        // 页面本身没拿到时，别去怪选择器 —— 直接说清请求为什么失败
+        if (!hHtml) {
+            _log('首页请求失败，class_parse 无页面可用：' + _why(home));
+        } else {
+            var byParse = _parseClassSelector(cp, hHtml);
+            if (byParse.length) {
+                _log('分类来源：class_parse（' + byParse.length + ' 项）');
+                return { class: byParse };
+            }
+            _log('class_parse 没抓到（父选择器 ' + _split(cp)[0] + '，页面 ' + hHtml.length + ' 字符）');
         }
-        _log('class_parse 没抓到（父选择器 ' + _split(cp)[0] + '）');
     }
 
     var cateRaw = _pick(r, ['分类', 'class', '分类数据', 'categories']);
@@ -434,6 +458,9 @@ function homeContent(filter) {
     if (html) {
         var nav = _navLinks(html);
         if (nav.length) return { class: nav };
+        _log('分类全部来源都没命中（页面 ' + html.length + ' 字符，导航里没有可识别的分类）');
+    } else {
+        _log('分类全部来源都失败：首页请求没拿到内容（' + _why(_homeURL(r)) + '）');
     }
     return { class: [] };
 }

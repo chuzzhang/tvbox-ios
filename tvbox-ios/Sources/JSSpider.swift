@@ -2,6 +2,37 @@ import Foundation
 import JavaScriptCore
 import SwiftSoup
 
+/// 原生 HTTP 的结果备注，按地址存。
+///
+/// 空字符串是「请求成功」还是「拿到 403 错误页」在 JS 里看不出区别，
+/// 把原因记在这里，drpy 解释器就能在日志里写「HTTP 502（源站上游不可用）」
+/// 而不是只有一句「0 字符」。
+final class HTTPNote: @unchecked Sendable {
+    static let shared = HTTPNote()
+
+    private let lock = NSLock()
+    private var map: [String: String] = [:]
+
+    func set(_ url: String, _ note: String) {
+        lock.lock()
+        if note.isEmpty { map.removeValue(forKey: url) } else { map[url] = note }
+        lock.unlock()
+    }
+
+    func get(_ url: String) -> String {
+        lock.lock()
+        let v = map[url] ?? ""
+        lock.unlock()
+        return v
+    }
+
+    func clear() {
+        lock.lock()
+        map.removeAll()
+        lock.unlock()
+    }
+}
+
 /// TVBox / catvod JS 引擎桥：在 iOS 上用 JavaScriptCore 跑 spider 脚本。
 ///
 /// 提供给 JS 的原生函数：request / joinUrl / pdfh / pdfa / log
@@ -420,6 +451,12 @@ final class JSSpider {
         }
         ctx.setObject(unsafeBitCast(request, to: AnyObject.self), forKeyedSubscript: "request" as NSString)
 
+        // JS 里判断「为什么没拿到页面」用：__httpNote(url) → "" 表示成功
+        let httpNote: @convention(block) (String) -> String = { url in
+            HTTPNote.shared.get(url)
+        }
+        ctx.setObject(unsafeBitCast(httpNote, to: AnyObject.self), forKeyedSubscript: "__httpNote" as NSString)
+
         let joinUrl: @convention(block) (String, String) -> String = { base, href in
             guard let b = URL(string: base) else { return href }
             return URL(string: href, relativeTo: b)?.absoluteString ?? href
@@ -440,32 +477,83 @@ final class JSSpider {
         ctx.setObject(unsafeBitCast(log, to: AnyObject.self), forKeyedSubscript: "log" as NSString)
     }
 
-    /// 同步 HTTP，供 JS 直接拿字符串
+    /// 同步 HTTP，供 JS 直接拿字符串。
+    /// 失败原因记进 HTTPNote，JS 侧用 __httpNote(url) 读出来 —— 否则诊断里只有「0 字符」，
+    /// 分不清是域名解析失败、被墙、还是源站 502。
     static func syncGet(_ urlString: String, headers: [String: String]) -> String {
-        guard let url = Net.makeURL(urlString) else { return "" }
+        guard let url = Net.makeURL(urlString) else {
+            HTTPNote.shared.set(urlString, "地址无效")
+            return ""
+        }
         var req = URLRequest(url: url)
-        req.timeoutInterval = 15
+        req.timeoutInterval = 12
         req.setValue(Net.shared.defaultUA, forHTTPHeaderField: "User-Agent")
         for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
 
         let sem = DispatchSemaphore(value: 0)
-        var result = ""
+        let box = ResultBox()
         let cfg = URLSessionConfiguration.ephemeral
-        cfg.timeoutIntervalForRequest = 15
+        cfg.timeoutIntervalForRequest = 12
         let session = URLSession(configuration: cfg, delegate: TrustAllDelegate(), delegateQueue: nil)
-        session.dataTask(with: req) { data, _, _ in
-            if let data, !data.isEmpty {
-                result = String(data: data, encoding: .utf8) ?? ""
-                if result.isEmpty {
-                    let gb = CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue))
-                    result = String(data: data, encoding: String.Encoding(rawValue: gb)) ?? ""
-                }
+        session.dataTask(with: req) { data, resp, err in
+            defer { sem.signal() }
+            if let err {
+                box.note = Self.describe(err)
+                return
             }
-            sem.signal()
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            if code != 0, !(200...299).contains(code) {
+                box.note = Self.describe(status: code)
+                return          // 错误页的正文（"upstream connect failed"）不能当 HTML 用
+            }
+            guard let data, !data.isEmpty else {
+                box.note = "HTTP \(code) 但内容为空"
+                return
+            }
+            if let s = String(data: data, encoding: .utf8) {
+                box.text = s
+            } else {
+                let gb = CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue))
+                box.text = String(data: data, encoding: String.Encoding(rawValue: gb)) ?? ""
+            }
+            if box.text.isEmpty { box.note = "HTTP \(code) 但正文无法按 UTF-8/GB18030 解码" }
         }.resume()
-        _ = sem.wait(timeout: .now() + 20)
+        _ = sem.wait(timeout: .now() + 18)
         session.invalidateAndCancel()
-        return result
+
+        if box.text.isEmpty && box.note.isEmpty { box.note = "请求超时（12 秒无响应）" }
+        HTTPNote.shared.set(urlString, box.text.isEmpty ? box.note : "")
+        return box.text
+    }
+
+    /// dataTask 回调与等待线程之间传结果
+    private final class ResultBox: @unchecked Sendable {
+        var text = ""
+        var note = ""
+    }
+
+    static func describe(_ err: Error) -> String {
+        let e = err as NSError
+        switch e.code {
+        case NSURLErrorTimedOut:            return "连接超时（12 秒）"
+        case NSURLErrorCannotFindHost:      return "域名解析失败（DNS 拿不到 IP）"
+        case NSURLErrorCannotConnectToHost: return "连不上主机（端口不通，或被网络拦截）"
+        case NSURLErrorNetworkConnectionLost: return "连接被重置"
+        case NSURLErrorSecureConnectionFailed,
+             NSURLErrorServerCertificateUntrusted: return "TLS 握手失败（证书问题或被中间设备拦截）"
+        case NSURLErrorNotConnectedToInternet: return "设备没有网络"
+        default: return e.localizedDescription
+        }
+    }
+
+    static func describe(status: Int) -> String {
+        switch status {
+        case 401, 403: return "HTTP \(status)（拒绝访问：鉴权或防盗链）"
+        case 404:      return "HTTP 404（页面不存在）"
+        case 500:      return "HTTP 500（源站内部错误）"
+        case 502, 503, 504: return "HTTP \(status)（源站上游不可用，服务器自己出问题了）"
+        default: return "HTTP \(status)"
+        }
     }
 
     // MARK: - 选择器
