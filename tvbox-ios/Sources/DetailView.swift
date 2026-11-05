@@ -14,7 +14,10 @@ struct DetailView: View {
     init(site: Site, item: VItem) {
         self.site = site
         self.item = item
-        self.loader = { try await CMSApi(base: site.api).detail(id: item.vod_id) }
+        // init 里取不到 environmentObject，基准地址从 Store 落盘的那份读
+        let base = UserDefaults.standard.string(forKey: "cfg.base") ?? ""
+        let api = site.apiURL(base: base)
+        self.loader = { try await CMSApi(base: api).detail(id: item.vod_id) }
     }
 
     init(site: Site, item: VItem, loader: @escaping () async throws -> VDetail?) {

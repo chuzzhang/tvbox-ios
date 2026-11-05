@@ -21,7 +21,10 @@ enum ConfigLoader {
 
         // 网络拉取：内部会按多个 UA 依次试
         let body = try await Net.shared.fetchConfigData(encode(text))
-        if let cfg = try? decodeConfig(body), hasSites(cfg) { return cfg }
+        if var cfg = try? decodeConfig(body), hasSites(cfg) {
+            cfg.resolvedBase = URLKit.base(text)
+            return cfg
+        }
 
         // 多仓格式：{"urls":[{"url":"...","name":"..."}]}
         if let multi = try? JSONDecoder().decode(MultiRepo.self, from: Net.stripJSONNoise(body)),
@@ -30,11 +33,15 @@ enum ConfigLoader {
             for r in list {
                 let label = r.name ?? r.url
                 guard let inner = try? await Net.shared.fetchConfigData(encode(r.url)),
-                      let sub = try? decodeConfig(inner) else {
+                      var sub = try? decodeConfig(inner) else {
                     tried.append("\(label) → 拉取失败")
                     continue
                 }
-                if hasSites(sub) { return sub }
+                if hasSites(sub) {
+                    // 子仓自己的相对路径以子仓地址为基准，用主配置地址会全错
+                    sub.resolvedBase = URLKit.base(r.url)
+                    return sub
+                }
                 tried.append("\(label) → 解析到了但没站点")
             }
             throw NetError.decode("多仓里 \(list.count) 个子仓都不可用", tried.joined(separator: "\n"))

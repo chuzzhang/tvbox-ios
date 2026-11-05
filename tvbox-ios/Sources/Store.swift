@@ -12,6 +12,8 @@ final class AppState: ObservableObject {
     @Published var selectedSiteKey: String? = nil
     /// 顶层 spider 的加载结果，脚本型站点全靠它
     @Published var spiderReport: SpiderStore.Report? = nil
+    /// 配置文件所在目录，配置里的 ./jar、./json 都要相对它解析
+    @Published var configBase: String = UserDefaults.standard.string(forKey: "cfg.base") ?? ""
 
     @Published var history: [VItem] = []
     @Published var favorites: [VItem] = []
@@ -53,6 +55,10 @@ final class AppState: ObservableObject {
                 throw NetError.decode("配置里没有可用站点",
                                       "共 \(cfg.sites?.count ?? 0) 个站点，api 与 ext 都为空")
             }
+            // 配置里的相对路径要相对配置地址解析，先算基准再让界面读配置
+            configBase = cfg.resolvedBase.isEmpty ? URLKit.base(configText) : cfg.resolvedBase
+            ud.set(configBase, forKey: "cfg.base")
+
             config = cfg
             ud.set(configText, forKey: "cfg.url")
             if selectedSiteKey == nil {
@@ -63,8 +69,9 @@ final class AppState: ObservableObject {
 
             // 顶层 spider 后台加载，不挡住配置显示
             let spiderField = cfg.spider
+            let base = configBase
             Task { @MainActor in
-                spiderReport = await SpiderStore.shared.report(for: spiderField)
+                spiderReport = await SpiderStore.shared.report(for: spiderField, base: base)
             }
         } catch {
             let msg = error.localizedDescription

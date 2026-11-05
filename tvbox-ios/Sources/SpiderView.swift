@@ -96,26 +96,34 @@ struct SpiderWebView: View {
         do {
             // 配置刚导入时 spider 可能还在后台下载，这里补一次
             var report = state.spiderReport
+            let base = state.configBase
             if report == nil, let raw = state.config?.spider {
-                report = await SpiderStore.shared.report(for: raw)
+                report = await SpiderStore.shared.report(for: raw, base: base)
             }
-            let r = try await ScriptResolver.resolve(site, spider: report)
-            guard let s = JSSpider(site: site, lib: ScriptResolver.bundledLib(), scripts: r.scripts) else {
+            let r = try await ScriptResolver.resolve(site, spider: report, base: base)
+            let lib = ScriptResolver.bundledLib()
+            let scripts = r.scripts
+
+            // JS 里的同步请求会阻塞线程，整个生命周期放在 JS 专用串行队列上
+            let s: JSSpider? = await JSSpider.run { JSSpider(site: site, lib: lib, scripts: scripts) }
+            guard let s else {
                 throw NetError.decode("JSContext 创建失败", r.diagnostics)
             }
             spider = s
-            let cats = s.home()
+            let cats = await JSSpider.run { s.home() }
+            let errText = await JSSpider.run { s.errorText }
+            let summary = await JSSpider.run { s.loadSummary }
             categories = cats
             current = cats.first?.type_id ?? ""
 
-            if let e = s.errorText {
+            if let e = errText {
                 initError = "脚本执行报错\n\n" + e + "\n\n———— 加载过程 ————\n" + r.diagnostics
                 loading = false
                 return
             }
             if cats.isEmpty {
                 initError = "脚本跑起来了，但没拿到分类\n\n"
-                    + s.loadSummary
+                    + summary
                     + "\n\n———— 加载过程 ————\n" + r.diagnostics
                 loading = false
                 return
@@ -132,7 +140,8 @@ struct SpiderWebView: View {
         guard let spider else { return }
         loading = true
         page = 1
-        let r = spider.category(tid: current, page: 1)
+        let tid = current
+        let r = await JSSpider.run { spider.category(tid: tid, page: 1) }
         items = r.items
         pageCount = r.pageCount
         loading = false
@@ -143,7 +152,8 @@ struct SpiderWebView: View {
         guard let spider else { return }
         loading = true
         let next = page + 1
-        let r = spider.category(tid: current, page: next)
+        let tid = current
+        let r = await JSSpider.run { spider.category(tid: tid, page: next) }
         if !r.items.isEmpty {
             let exist = Set(items.map(\.vod_id))
             items += r.items.filter { !exist.contains($0.vod_id) }
@@ -157,7 +167,8 @@ struct SpiderWebView: View {
     @MainActor
     private func openDetail(_ item: VItem) async {
         guard let spider else { return }
-        let d = spider.detail(id: item.vod_id)
+        let id = item.vod_id
+        let d = await JSSpider.run { spider.detail(id: id) }
         if let d { playing = d }
     }
 }

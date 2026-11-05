@@ -23,7 +23,7 @@ final class Net {
                headers: [String: String] = [:],
                timeout: TimeInterval = 15,
                retry: Int = 1) async throws -> Data {
-        guard let url = URL(string: urlString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? urlString) else {
+        guard let url = Net.makeURL(urlString) else {
             throw NetError.badURL(urlString)
         }
         var lastError: Error = NetError.empty
@@ -70,6 +70,16 @@ final class Net {
         }
     }
 
+    /// 地址归一：已经合法的直接用（含已编码的 %XX 也合法），
+    /// 只有含中文/空格这类字符时才编码。
+    /// 无脑 addingPercentEncoding 会把已有的 % 变成 %25，中文路径直接 404。
+    static func makeURL(_ s: String) -> URL? {
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let u = URL(string: t), u.scheme != nil { return u }
+        guard let enc = t.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { return nil }
+        return URL(string: enc)
+    }
+
     static func stripJSONNoise(_ data: Data) -> Data {
         guard var s = String(data: data, encoding: .utf8) else { return data }
         s = s.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -111,8 +121,7 @@ extension Net {
     ]
 
     func fetchConfigData(_ urlString: String) async throws -> Data {
-        let encoded = urlString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? urlString
-        guard let url = URL(string: encoded) else { throw NetError.badURL(urlString) }
+        guard let url = Net.makeURL(urlString) else { throw NetError.badURL(urlString) }
 
         var log: [String] = []
         for ua in Net.configUAs {
@@ -277,5 +286,40 @@ final class TrustAllDelegate: NSObject, URLSessionDelegate {
             return
         }
         completionHandler(.useCredential, URLCredential(trust: trust))
+    }
+}
+
+// MARK: - 脚本 / 规则文件下载
+// 静态资源站（jundie 那类）常挂 Referer 校验，裸请求直接 401。
+// 这里按「无 Referer → 同源 Referer → 换 UA + Referer」逐级重试，
+// 全部失败才把最后一次的错误抛出去。
+extension Net {
+
+    func fetchScriptData(_ urlString: String, referer: String? = nil) async throws -> Data {
+        let origin = URLKit.origin(urlString)
+        let refs: [String?] = [nil, referer ?? (origin.isEmpty ? nil : origin)]
+        let uas = [
+            defaultUA,
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "okhttp/3.12.13",
+            "Dalvik/2.1.0 (Linux; U; Android 9; MI 8 Build/PKQ1.180729.001)"
+        ]
+
+        // 组合固定成 5 次：裸请求 → 同源 Referer → 换 UA 配 Referer。
+        // 再多就是干等超时，静态资源站要么一开始就给，要么就一直是 401。
+        var attempts: [(String, String?)] = [(uas[0], refs[0]), (uas[0], refs[1])]
+        for ua in uas.dropFirst() { attempts.append((ua, refs[1])) }
+
+        var lastError: Error = NetError.empty
+        for (ua, ref) in attempts {
+            var headers: [String: String] = ["User-Agent": ua]
+            if let ref, !ref.isEmpty { headers["Referer"] = ref }
+            do {
+                return try await fetch(urlString, headers: headers, timeout: 25, retry: 0)
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError
     }
 }

@@ -3,9 +3,16 @@ import ZIPFoundation
 
 /// 把站点解析成「要执行的 js 段」。
 ///
-/// 优先级：站点自带的 js/jar → 配置顶层 spider → 内置 Resources/spider.js。
-/// 真实配置里 type 3 站点的 api 多数是 `csp_xxx` 这种标识符，脚本来自顶层 spider，
-/// 所以顶层 spider 必须参与，否则每个脚本型站点都会落空。
+/// 解析顺序（前一条命中就不再往下走）：
+/// 1. ext 是 drpy 规则（JSON / .json / .js 规则）→ 内置 drpy 解释器
+/// 2. api 指向 drpy 框架库 → 从 ext 取规则，同样走解释器
+/// 3. api 是 js 直链 → 下载执行
+/// 4. api 是 jar → 抽包内 js
+/// 5. 以上都没有 → 配置顶层 spider
+/// 6. 最后 → 内置 Resources/spider.js
+///
+/// 所有地址先按配置文件的 URL 解析相对路径：`./jar/x.jar`、`./json/x.json`
+/// 这类写法在原版 TVBox 里是相对配置地址的，不解析就是死路径。
 enum ScriptResolver {
 
     struct Resolved {
@@ -15,63 +22,136 @@ enum ScriptResolver {
         var diagnostics: String
     }
 
-    static func resolve(_ site: Site, spider: SpiderStore.Report?) async throws -> Resolved {
-        var notes: [String] = []
-        let api = site.api.trimmingCharacters(in: .whitespacesAndNewlines)
-        let lower = api.lowercased()
-        notes.append("站点 key=\(site.key)  type=\(site.type)")
-        notes.append("api=\(api.isEmpty ? "（空）" : api)")
+    /// 同一站点的脚本没必要每次搜索/进页面都重下一次
+    private static let cacheLock = NSLock()
+    private static var cache: [String: Resolved] = [:]
 
-        // 1) 站点自己的脚本
-        if lower.hasPrefix("http") {
+    static func resolve(_ site: Site,
+                        spider: SpiderStore.Report?,
+                        base: String? = nil) async throws -> Resolved {
+        let key = "\(site.key)|\(site.api)|\(Drpy.extText(site.ext))|\(base ?? "")"
+        cacheLock.lock()
+        if let hit = cache[key] {
+            cacheLock.unlock()
+            return hit
+        }
+        cacheLock.unlock()
+
+        let r = try await resolveUncached(site, spider: spider, base: base)
+        cacheLock.lock()
+        cache[key] = r
+        cacheLock.unlock()
+        return r
+    }
+
+    private static func resolveUncached(_ site: Site,
+                                        spider: SpiderStore.Report?,
+                                        base: String? = nil) async throws -> Resolved {
+
+        var notes: [String] = []
+        let apiRaw = site.api.trimmingCharacters(in: .whitespacesAndNewlines)
+        let api = URLKit.resolve(SpiderStore.stripSuffix(apiRaw), base: base)
+        let extText = Drpy.extText(site.ext)
+
+        notes.append("站点 key=\(site.key)  type=\(site.type)")
+        notes.append("api=\(apiRaw.isEmpty ? "（空）" : apiRaw)")
+        if api != apiRaw, !api.isEmpty { notes.append("api 解析为：\(api)") }
+        if !extText.isEmpty {
+            let brief = extText.count > 90 ? String(extText.prefix(90)) + "…" : extText
+            notes.append("ext=\(brief)")
+        }
+
+        // 1 / 2) drpy 规则站点
+        let extIsRuleFile = URLKit.looksLikeURL(extText) && !extText.hasPrefix("{")
+            && (extText.lowercased().contains(".json") || extText.lowercased().contains(".js"))
+        let extIsJSON = extText.hasPrefix("{")
+        let extLooksRule = extIsJSON && Drpy.looksLikeRule(extText)
+        if !extText.isEmpty && (extIsRuleFile || extLooksRule || Drpy.isFramework(api) || Drpy.isFramework(apiRaw)) {
+            let attempt = await Drpy.load(site: site, apiURL: api, base: base)
+            notes.append(contentsOf: attempt.notes)
+            if let r = attempt.result {
+                notes.append("脚本来源：\(r.source)")
+                return Resolved(scripts: r.scripts, source: r.source,
+                                diagnostics: notes.joined(separator: "\n"))
+            }
+        } else if extText.isEmpty && (Drpy.isFramework(api) || Drpy.isFramework(apiRaw)) {
+            notes.append("api 是 drpy 框架库，但站点没给 ext 规则 —— 这份配置在 Android TVBox 上同样跑不起来")
+        }
+
+        // 3 / 4) 站点自带脚本
+        if api.lowercased().hasPrefix("http") {
+            let lower = api.lowercased()
             if lower.contains(".js") {
                 do {
-                    let text = try await Net.shared.fetchText(api)
+                    let data = try await Net.shared.fetchScriptData(api)
+                    let text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
                     if !text.isEmpty {
-                        notes.append("使用站点自带 js：\(text.count / 1024) KB")
-                        return Resolved(scripts: [text], source: "site.js", diagnostics: notes.joined(separator: "\n"))
+                        if Drpy.looksLikeRule(text) || Drpy.isFramework(api) {
+                            notes.append("站点 js 是 drpy 框架库/规则，改用解释器")
+                            let attempt = await Drpy.load(site: site, apiURL: api, base: base)
+                            notes.append(contentsOf: attempt.notes)
+                            if let r = attempt.result {
+                                notes.append("脚本来源：\(r.source)")
+                                return Resolved(scripts: r.scripts, source: r.source,
+                                                diagnostics: notes.joined(separator: "\n"))
+                            }
+                            notes.append("drpy 解释器也没能组出脚本（多半是缺 ext 规则）")
+                        } else {
+                            notes.append("使用站点自带 js：\(text.count / 1024) KB")
+                            return Resolved(scripts: [text], source: "site.js",
+                                            diagnostics: notes.joined(separator: "\n"))
+                        }
+                    } else {
+                        notes.append("站点 api 指向的 js 是空文件")
                     }
-                    notes.append("站点 api 指向的 js 是空文件")
                 } catch {
                     notes.append("站点脚本下载失败：\(error.localizedDescription)")
                 }
             } else if lower.contains(".jar") {
                 do {
-                    let data = try await Net.shared.fetch(api, timeout: 40)
+                    let data = try await Net.shared.fetchScriptData(api)
                     let ex = SpiderStore.extract(data, preferKey: site.key)
                     if !ex.scripts.isEmpty {
                         notes.append("站点 jar 内抽到 \(ex.scripts.count) 段 js：\(ex.jsNames.prefix(3).joined(separator: ", "))")
-                        return Resolved(scripts: ex.scripts, source: "site.jar", diagnostics: notes.joined(separator: "\n"))
+                        return Resolved(scripts: ex.scripts, source: "site.jar",
+                                        diagnostics: notes.joined(separator: "\n"))
                     }
-                    notes.append("站点 jar 内 \(ex.entries.count) 个文件，没有 js")
+                    let dex = ex.entries.filter { $0.lowercased().hasSuffix(".dex") }.count
+                    notes.append("站点 jar 内 \(ex.entries.count) 个文件，没有 js（dex \(dex) 个）")
                 } catch {
                     notes.append("站点 jar 下载失败：\(error.localizedDescription)")
                 }
             }
         }
 
-        // 2) 配置顶层 spider
+        // 5) 配置顶层 spider
         if let sp = spider {
             notes.append(sp.summary)
             if !sp.entries.isEmpty {
                 notes.append("spider 包内文件：" + sp.entries.prefix(12).joined(separator: ", "))
             }
             if let b = sp.bundle, !b.scripts.isEmpty {
-                return Resolved(scripts: b.scripts, source: b.source, diagnostics: notes.joined(separator: "\n"))
+                notes.append("使用顶层 spider：\(b.source)")
+                return Resolved(scripts: b.scripts, source: b.source,
+                                diagnostics: notes.joined(separator: "\n"))
             }
         } else {
             notes.append("顶层 spider 尚未加载")
         }
 
-        // 3) 内置脚本（用户把 spider.js 放进 Resources 时生效）
+        // 6) 内置脚本（用户把 spider.js 放进 Resources 时生效）
         if let local = bundledSpider() {
             notes.append("使用内置 Resources/spider.js")
-            return Resolved(scripts: [local], source: "bundle:spider.js", diagnostics: notes.joined(separator: "\n"))
+            return Resolved(scripts: [local], source: "bundle:spider.js",
+                            diagnostics: notes.joined(separator: "\n"))
         }
 
         notes.append("—— 结论：这个站点在 iOS 上缺可执行的脚本")
-        notes.append("纯 dex 的 jar spider 需要 Android 运行时，iOS 没有对应实现；")
-        notes.append("换成 CMS 站点（type 0/1）或 js spider 站点才能用。")
+        if extText.isEmpty && site.type == 3 {
+            notes.append("站点既没有 js/jar 直链，也没有 ext 规则；它的实现应该在顶层 spider 的 dex 里。")
+        }
+        notes.append("纯 dex 的 jar spider 需要 Android 运行时（ART），iOS 没有对应实现；")
+        notes.append("换成 CMS 站点（type 0/1）、js spider 站点、或带 ext 规则的 drpy 站点才能用。")
         throw NetError.decode("站点「\(site.name)」没有可执行的脚本", notes.joined(separator: "\n"))
     }
 

@@ -102,7 +102,7 @@ struct SearchView: View {
 
         if site.isCMSRoute {
             do {
-                let r = try await CMSApi(base: site.api).search(wd: kw)
+                let r = try await CMSApi(base: site.apiURL(base: state.configBase)).search(wd: kw)
                 results = r
                 if r.isEmpty { msg = "没有找到「\(kw)」" }
             } catch {
@@ -118,22 +118,23 @@ struct SearchView: View {
             return
         }
 
-        // 脚本站在后台线程跑：JS 里的同步请求会阻塞，不能占着主线程
+        // 脚本站在后台队列跑：JS 里的同步请求会阻塞，不能占着主线程
         var report = state.spiderReport
+        let base = state.configBase
         if report == nil, let raw = state.config?.spider {
-            report = await SpiderStore.shared.report(for: raw)
+            report = await SpiderStore.shared.report(for: raw, base: base)
         }
         do {
-            let r = try await ScriptResolver.resolve(site, spider: report)
+            let r = try await ScriptResolver.resolve(site, spider: report, base: base)
             let lib = ScriptResolver.bundledLib()
             let scripts = r.scripts
-            let found = await Task.detached(priority: .userInitiated) { () -> (items: [VItem], err: String?) in
+            let found = await JSSpider.run { () -> (items: [VItem], err: String?) in
                 guard let sp = JSSpider(site: site, lib: lib, scripts: scripts) else {
-                    return ([], "JSContext 创建失败")
+                    return (items: [], err: "JSContext 创建失败")
                 }
-                let items = sp.search(key: kw)
-                return (items, sp.errorText)
-            }.value
+                let list = sp.search(key: kw)
+                return (items: list, err: sp.errorText)
+            }
             results = found.items
             if results.isEmpty {
                 msg = found.err ?? "没有找到「\(kw)」（该站可能没写 searchContent）"

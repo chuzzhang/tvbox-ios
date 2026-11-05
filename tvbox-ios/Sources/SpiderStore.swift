@@ -52,12 +52,14 @@ final class SpiderStore {
     private var cache: [String: Report] = [:]
     private var inflight: [String: Task<Report, Never>] = [:]
 
-    func report(for raw: String?) async -> Report {
+    func report(for raw: String?, base: String? = nil) async -> Report {
         let rawText = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rawText.isEmpty else {
             return .failure("", "配置里没有 spider 字段（纯 CMS 配置可以忽略这条）")
         }
-        let url = Self.stripSuffix(rawText)
+        let stripped = Self.stripSuffix(rawText)
+        // 配置里写的是 ./jar/xxx.jar，相对的是配置文件地址，不解析成绝对地址就永远下不到
+        let url = URLKit.resolve(stripped, base: base)
 
         lock.lock()
         if let hit = cache[url] {
@@ -105,16 +107,28 @@ final class SpiderStore {
             if let data = Data(base64Encoded: url, options: .ignoreUnknownCharacters), data.count > 64 {
                 return unpack(data, source: "spider(base64)", into: rep)
             }
-            return Report(ok: false, raw: raw, url: url,
-                          message: "spider 不是 http 地址：\(url.prefix(80))")
+            var msg = "spider 不是 http 地址：\(String(url.prefix(80)))"
+            if raw.hasPrefix("./") || raw.hasPrefix("../") || raw.hasPrefix("/") {
+                msg = "spider 写的是相对路径 \(raw)，但配置地址不是网络地址，解析不出绝对地址"
+            }
+            return Report(ok: false, raw: raw, url: url, message: msg)
         }
 
         do {
-            // js 直链：直接抓文本
+            // js 直链：直接抓文本（静态资源站常挂 Referer 校验，走多级重试）
             if url.lowercased().contains(".js") {
-                let text = try await Net.shared.fetchText(url)
+                let data = try await Net.shared.fetchScriptData(url)
+                let text = String(data: data, encoding: .utf8)
+                    ?? String(decoding: data, as: UTF8.self)
                 guard !text.isEmpty else {
                     return Report(ok: false, raw: raw, url: url, message: "spider.js 是空文件")
+                }
+                // 下回来的其实是 drpy 框架库：它没有 homeContent，单独跑没意义
+                if Drpy.isFramework(url) {
+                    rep.ok = false
+                    rep.message = "spider 指向 drpy 框架库（\(text.count / 1024) KB），规则要从站点 ext 取"
+                    rep.entries = ["drpy-framework"]
+                    return rep
                 }
                 rep.ok = true
                 rep.scripts = [text]
@@ -123,7 +137,7 @@ final class SpiderStore {
                 return rep
             }
 
-            let data = try await Net.shared.fetch(url, timeout: 40, retry: 2)
+            let data = try await Net.shared.fetchScriptData(url)
             return unpack(data, source: "spider 包", into: rep)
         } catch {
             return Report(ok: false, raw: raw, url: url,

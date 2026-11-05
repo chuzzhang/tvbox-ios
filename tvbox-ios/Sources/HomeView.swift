@@ -98,7 +98,9 @@ struct FeedView: View {
     @State private var loading = false
     @State private var err: String? = nil
 
-    private var api: CMSApi { CMSApi(base: site.api, headers: [:]) }
+    private var api: CMSApi {
+        CMSApi(base: site.apiURL(base: state.configBase), headers: [:])
+    }
 
     private let cols = [GridItem(.adaptive(minimum: 108, maximum: 150), spacing: 12)]
 

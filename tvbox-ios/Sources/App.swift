@@ -89,6 +89,14 @@ struct ConfigView: View {
                 .foregroundColor(.secondary)
             }
 
+            if !state.configBase.isEmpty {
+                Text("配置基准：\(state.configBase)")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             if let report = state.spiderReport {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("顶层 spider")

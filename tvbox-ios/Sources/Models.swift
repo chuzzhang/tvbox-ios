@@ -56,6 +56,9 @@ struct BoxConfig: Codable {
     var lives: [Live]?
     var parses: [Parse]?
     var flags: [String]?
+    /// 实际命中的配置地址目录（多仓时是子仓的地址），配置里的 ./xxx 相对它解析。
+    /// 不参与编解码，只在加载过程里填。
+    var resolvedBase: String = ""
 
     private enum BoxKeys: String, CodingKey {
         case spider, wallpaper, sites, lives, parses, flags
@@ -234,6 +237,11 @@ struct Site: Codable, Identifiable {
         case .string(let s): return !s.isEmpty
         default: return false
         }
+    }
+
+    /// api 里的相对路径（`./api.php`、`/api.php/provide/vod`）要相对配置地址解析
+    func apiURL(base: String?) -> String {
+        URLKit.resolve(api, base: base)
     }
 }
 

@@ -16,6 +16,10 @@ final class JSSpider {
         var lines: [String] = []
     }
 
+    /// 脚本里的 request() 是同步的（信号量等 HTTP 返回），直接在 UI 线程跑会卡住整个界面。
+    /// 同一份 JSContext 又不能被并发访问，所以统一放到一条串行队列上。
+    static let jsQueue = DispatchQueue(label: "osc.tvbox.jspider", qos: .userInitiated)
+
     private let ctx: JSContext
     private let box = LogBox()
     private let siteKey: String
@@ -431,8 +435,7 @@ final class JSSpider {
 
     /// 同步 HTTP，供 JS 直接拿字符串
     static func syncGet(_ urlString: String, headers: [String: String]) -> String {
-        let encoded = urlString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? urlString
-        guard let url = URL(string: encoded) else { return "" }
+        guard let url = Net.makeURL(urlString) else { return "" }
         var req = URLRequest(url: url)
         req.timeoutInterval = 15
         req.setValue(Net.shared.defaultUA, forHTTPHeaderField: "User-Agent")
@@ -518,5 +521,15 @@ final class JSSpider {
         guard !s.contains(" ") && !s.contains(".") && !s.contains("#") && !s.contains(">") else { return false }
         let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_:")
         return s.unicodeScalars.allSatisfy { allowed.contains($0) }
+    }
+}
+
+// MARK: - 执行队列
+extension JSSpider {
+
+    static func run<T>(_ body: @escaping () -> T) async -> T {
+        await withCheckedContinuation { (cont: CheckedContinuation<T, Never>) in
+            jsQueue.async { cont.resume(returning: body()) }
+        }
     }
 }
