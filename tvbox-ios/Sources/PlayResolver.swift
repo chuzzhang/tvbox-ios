@@ -71,7 +71,9 @@ enum PlayResolver {
         notes.append("播放地址：\(short(s))")
 
         var headers: [String: String] = ["User-Agent": Net.shared.defaultUA]
-        if let origin = URLKit.origin(siteBase ?? s), !origin.isEmpty {
+        // origin 返回的是 String（拿不到时是空串），不能当可选值二次绑定
+        let origin = URLKit.origin(siteBase ?? s)
+        if !origin.isEmpty {
             headers["Referer"] = origin + "/"
         }
 

@@ -171,6 +171,33 @@ TYPE_RE = re.compile(
     r'^\s*(?:public\s+|internal\s+|private\s+|fileprivate\s+|final\s+|open\s+)*'
     r'(?:struct|class|enum|protocol|actor)\s+([A-Z][A-Za-z0-9_]*)', re.M)
 
+# 这几个 helper 返回的是非可选 String（取不到给空串）。
+# 写成 `if let x = URLKit.origin(...)` 编不过：conditional binding 要求 Optional。
+# 编译器只会报 "initializer for conditional binding must have Optional type"，
+# 一行一个，改一轮发现一个，很费时间 —— 这里提前拦掉。
+NON_OPTIONAL_HELPERS = (
+    'URLKit.origin',
+    'URLKit.base',
+    'URLKit.resolve',
+    'URLKit.looksLikeURL',
+    'URLKit.relativize',
+)
+
+BIND_RE = re.compile(r'\b(?:if|guard)\s+let\s+[A-Za-z_]\w*\s*=\s*([^,{\n]*)')
+
+
+def check_bindings(path, code):
+    """if/guard let 绑定的右侧如果是非可选返回值的 helper，直接报错。"""
+    for line_no, line in enumerate(code.splitlines(), 1):
+        for m in BIND_RE.finditer(line):
+            expr = m.group(1)
+            if 'try?' in expr or 'as?' in expr:
+                continue
+            for helper in NON_OPTIONAL_HELPERS:
+                if expr.strip().startswith(helper + '('):
+                    err(f'{path}:{line_no} `{helper}()` 返回 String 不是 Optional，'
+                        f'不能用 if/guard let 绑定（改成 let x = ...; if !x.isEmpty）')
+
 
 def collect_types(swift_files):
     decl = {}
@@ -208,6 +235,7 @@ def main():
         code = strip_swift(raw)
         check_balance(rel, code)
         check_directives(rel, raw.splitlines())
+        check_bindings(rel, code)
 
         # 未闭合的字符串会表现为引号计数为奇数（排除 """ 与 #"）
         plain = re.sub(r'"""[\s\S]*?"""', '', raw)
