@@ -1,6 +1,6 @@
 # TVBox iOS 交接文档
 
-版本：build 12（`CURRENT_PROJECT_VERSION: "12"`）  
+版本：build 13（`CURRENT_PROJECT_VERSION: "13"`）  
 最后更新：2026-11-07  
 项目根：`tvbox-ios/`
 
@@ -267,6 +267,21 @@ http URL
 
 改过滤规则只动 `Resources/sniff_rules.json`，不重编；改 hook 要同步 `tests/parse_webview.test.js`（它把 `parse_sniff.js` 丢进 vm 的假 DOM 里跑，真机上 JS 语法错的表现是"所有 parses 站点静默失败"）。
 
+### 4.10 CMS 分类可能是两级的，父分类经常是空的
+
+maccms 的 `class` 里有 `type_pid`。很多源（例如 `api.souavzy.vip`）顶层分类只做分组，
+本身一条片子都不挂：`?ac=videolist&t=20`（中文传媒）返回 `total=0`，
+只有子分类 `t=24`（传媒-麻豆传媒）才有数据。
+
+`FeedView` 因此拆成两行分类条：
+
+- 顶层：`type_pid` 为空、为 `"0"`、或指向一个不存在的 id
+- 子分类：`type_pid == 选中的顶层 id`，有子分类时显示第二行，尺寸小一号
+- **默认落到第一个顶层下的第一个子分类**，不是第一个顶层本身 —— 否则一进站点就是「该分类没有返回内容」
+
+`VCategory.type_pid` 走 `Loose.text` 取（maccms 里是数字），加字段时别忘了同步
+`extension VCategory` 的 `init(from:)` / `encode(to:)` 两处，只改 struct 声明不会生效。
+
 ## 5. 持久化
 
 全部 `UserDefaults`，没有 CoreData。
@@ -334,15 +349,15 @@ cd build && zip -qry TVBox.ipa Payload
 
 ### 发版号
 
-改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 12），commit 后 CI 出新包并**自动发 Release**：
+改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 13），commit 后 CI 出新包并**自动发 Release**：
 
 ```
-tag        build12
-标题       TVBox 1.0.0 (build 12)
-资产       TVBox-1.0.12.ipa（未签名）+ TVBox-1.0.12.ipa.sha256
+tag        build13
+标题       TVBox 1.0.0 (build 13)
+资产       TVBox-1.0.13.ipa（未签名）+ TVBox-1.0.13.ipa.sha256
 ```
 
-资产名的 `1.0.12` = `MARKETING_VERSION` 去掉末位（1.0）+ `CURRENT_PROJECT_VERSION`（12）。
+资产名的 `1.0.13` = `MARKETING_VERSION` 去掉末位（1.0）+ `CURRENT_PROJECT_VERSION`（13）。
 这个名字由 workflow 里「读版本号」步骤算出来，改版号不用动 workflow。
 
 不要改 `MARKETING_VERSION`（保持 `1.0.0`）。Release 步骤是幂等的：同名 tag 会先删再建，所以同一个版本号重跑不会撞，资产也会被覆盖成最新构建。发版需要 `permissions: contents: write`，已经写在 workflow 的 job 上——仓库默认 workflow 权限是 read，去掉这段会 403。

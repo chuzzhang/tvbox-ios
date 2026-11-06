@@ -90,7 +90,11 @@ struct FeedView: View {
     @EnvironmentObject var state: AppState
     let site: Site
 
-    @State private var categories: [VCategory] = []
+    /// 全部分类、顶层分类、当前顶层下的子分类
+    @State private var allCats: [VCategory] = []
+    @State private var roots: [VCategory] = []
+    @State private var kids: [VCategory] = []
+    @State private var rootId: String = ""
     @State private var current: String = ""
     @State private var items: [VItem] = []
     @State private var page = 1
@@ -106,28 +110,11 @@ struct FeedView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if !categories.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(categories) { c in
-                            Button {
-                                guard current != c.type_id else { return }
-                                current = c.type_id
-                                Task { await reload() }
-                            } label: {
-                                Text(c.type_name)
-                                    .font(.system(size: 13, weight: .medium))
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 7)
-                                    .background(current == c.type_id ? Color.accentColor : Color(white: 0.16))
-                                    .foregroundColor(current == c.type_id ? .white : .secondary)
-                                    .cornerRadius(8)
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                }
+            if !roots.isEmpty {
+                chipRow(roots, selected: rootId, small: false) { c in select(root: c) }
+            }
+            if !kids.isEmpty {
+                chipRow(kids, selected: current, small: true) { c in select(kid: c) }
             }
 
             if let err {
@@ -136,7 +123,7 @@ struct FeedView: View {
                     onNextSite: { state.switchToNextSite() },
                     onRetry: {
                         self.err = nil
-                        Task { await boot() }
+                        Task { await reload() }
                     }
                 )
             } else {
@@ -169,19 +156,81 @@ struct FeedView: View {
         .task { await boot() }
     }
 
+    // MARK: - 分类条
+
+    @ViewBuilder
+    private func chipRow(_ list: [VCategory], selected: String, small: Bool,
+                         tap: @escaping (VCategory) -> Void) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(list) { c in
+                    Button { tap(c) } label: {
+                        Text(c.type_name)
+                            .font(.system(size: small ? 12 : 13, weight: .medium))
+                            .padding(.horizontal, small ? 10 : 12)
+                            .padding(.vertical, small ? 6 : 7)
+                            .background(selected == c.type_id ? Color.accentColor : Color(white: 0.16))
+                            .foregroundColor(selected == c.type_id ? .white : .secondary)
+                            .cornerRadius(8)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, small ? 4 : 8)
+        }
+    }
+
+    // MARK: - 加载
+
     @MainActor
     private func boot() async {
-        guard categories.isEmpty else { return }
+        guard roots.isEmpty else { return }
         loading = true
         do {
             let cats = try await api.categories()
-            categories = cats
-            current = cats.first?.type_id ?? ""
+            allCats = cats
+            let ids = Set(cats.map(\.type_id))
+            let top = cats.filter { c in
+                let p = c.type_pid ?? ""
+                return p.isEmpty || p == "0" || !ids.contains(p)
+            }
+            roots = top.isEmpty ? cats : top
+            rootId = roots.first?.type_id ?? ""
+            kids = allCats.filter { ($0.type_pid ?? "") == rootId }
+            // 「中文传媒 / 国产 / 明星网黄」这类父分类本身不挂片子，只有子分类有内容。
+            // 默认直接落到第一个子分类，否则一进站点就是「该分类没有返回内容」。
+            current = kids.first?.type_id ?? rootId
             await reload()
         } catch {
             err = error.localizedDescription
         }
         loading = false
+    }
+
+    @MainActor
+    private func select(root c: VCategory) {
+        guard rootId != c.type_id else { return }
+        rootId = c.type_id
+        kids = allCats.filter { ($0.type_pid ?? "") == c.type_id }
+        current = kids.first?.type_id ?? c.type_id
+        items = []
+        page = 1
+        err = nil
+        Task { await reload() }
+    }
+
+    @MainActor
+    private func select(kid c: VCategory) {
+        guard current != c.type_id else { return }
+        current = c.type_id
+        items = []
+        page = 1
+        err = nil
+        Task { await reload() }
+    }
+
+    private func nameOf(_ tid: String) -> String {
+        allCats.first { $0.type_id == tid }?.type_name ?? tid
     }
 
     @MainActor
@@ -192,7 +241,7 @@ struct FeedView: View {
             let r = try await api.list(tid: current, page: 1)
             items = r.items
             pageCount = r.pagecount
-            err = r.items.isEmpty ? "该分类没有返回内容" : nil
+            err = r.items.isEmpty ? "「\(nameOf(current))」没有返回内容" : nil
         } catch {
             err = error.localizedDescription
         }

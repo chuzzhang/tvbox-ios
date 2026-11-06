@@ -339,6 +339,9 @@ enum Loose {
 struct VCategory: Codable, Identifiable, Hashable {
     var type_id: String
     var type_name: String
+    /// 父分类 id：0 或空表示顶层。有些源这一级（中文传媒、国产、明星网黄）本身
+    /// 不挂片子，只有子分类有内容，点父分类就会拿到空列表
+    var type_pid: String?
     var id: String { type_id }
 }
 
@@ -455,12 +458,15 @@ extension VCategory {
         let name = Loose.text(c, "type_name") ?? Loose.text(c, "name") ?? ""
         self.type_id = tid
         self.type_name = name.isEmpty ? tid : name
+        // maccms 里 type_pid 是数字，Loose.text 会转成字符串
+        self.type_pid = Loose.text(c, "type_pid")
     }
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Loose.AnyKey.self)
         try c.encode(type_id, forKey: Loose.AnyKey("type_id"))
         try c.encode(type_name, forKey: Loose.AnyKey("type_name"))
+        try c.encodeIfPresent(type_pid, forKey: Loose.AnyKey("type_pid"))
     }
 }
 
