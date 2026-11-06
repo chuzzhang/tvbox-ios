@@ -128,7 +128,7 @@ struct FeedView: View {
                 )
             } else {
                 ScrollView {
-                    LazyVGrid(columns: cols, spacing: 14) {
+                    LazyVGrid(columns: cols, spacing: 18) {
                         ForEach(items) { item in
                             NavigationLink {
                                 DetailView(site: site, item: item)
@@ -280,41 +280,47 @@ struct PosterCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            ZStack(alignment: .bottomTrailing) {
-                AsyncImage(url: URL(string: item.vod_pic ?? "")) { phase in
-                    switch phase {
-                    case .success(let img):
-                        img.resizable().aspectRatio(contentMode: .fill)
-                    default:
-                        ZStack {
-                            Color(white: 0.15)
-                            Image(systemName: "film").foregroundColor(Color(white: 0.35))
+            // 用 Color 撑出固定尺寸，图片作为 overlay 填满。
+            // 直接给 AsyncImage 加 .frame(height:) 时，scaledToFill 的图片会按自身比例
+            // 撑出一个超宽的内容尺寸，LazyVGrid 的格子跟着变宽，相邻卡片就压在一起。
+            Color(white: 0.15)
+                .frame(height: 156)
+                .frame(maxWidth: .infinity)
+                .overlay {
+                    AsyncImage(url: URL(string: item.vod_pic ?? "")) { phase in
+                        switch phase {
+                        case .success(let img):
+                            img.resizable().scaledToFill()
+                        default:
+                            Image(systemName: "film")
+                                .font(.system(size: 26))
+                                .foregroundColor(Color(white: 0.35))
                         }
                     }
                 }
-                .frame(height: 156)
-                .frame(maxWidth: .infinity)
-                .clipped()
-                .cornerRadius(8)
-
-                if let r = item.vod_remarks, !r.isEmpty {
-                    Text(r)
-                        .font(.system(size: 10, weight: .semibold))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(Color.black.opacity(0.65))
-                        .foregroundColor(.orange)
-                        .cornerRadius(4)
-                        .padding(5)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(alignment: .bottomTrailing) {
+                    if let r = item.vod_remarks, !r.isEmpty {
+                        Text(r)
+                            .font(.system(size: 10, weight: .semibold))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.black.opacity(0.65))
+                            .foregroundColor(.orange)
+                            .cornerRadius(4)
+                            .padding(5)
+                    }
                 }
-            }
 
             Text(item.vod_name)
                 .font(.system(size: 12))
                 .foregroundColor(.white.opacity(0.9))
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .contentShape(Rectangle())
     }
 }
 

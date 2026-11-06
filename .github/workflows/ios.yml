@@ -34,7 +34,8 @@ jobs:
           echo "build=$V" >> "$GITHUB_OUTPUT"
           echo "tag=build$V" >> "$GITHUB_OUTPUT"
           echo "full=$FULL" >> "$GITHUB_OUTPUT"
-          echo "版本：$M (build $V)  →  Release tag: build$V，ipa 文件名 TVBox-$FULL.ipa"
+          echo "版本：$M (build $V)"
+          echo "安装后显示：$FULL（$V）   Release tag: build$V   ipa: TVBox-$FULL.ipa"
 
       - name: 选择 Xcode
         run: |
@@ -127,6 +128,8 @@ jobs:
             -archivePath build/TVBox.xcarchive \
             -derivedDataPath build/dd \
             -resultBundlePath build/TVBox.xcresult \
+            MARKETING_VERSION="${{ steps.ver.outputs.full }}" \
+            CURRENT_PROJECT_VERSION="${{ steps.ver.outputs.build }}" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \

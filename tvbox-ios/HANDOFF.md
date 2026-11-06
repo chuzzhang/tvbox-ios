@@ -1,6 +1,6 @@
 # TVBox iOS 交接文档
 
-版本：build 15（`CURRENT_PROJECT_VERSION: "15"`）  
+版本：build 16（`CURRENT_PROJECT_VERSION: "16"`）  
 最后更新：2026-11-07  
 项目根：`tvbox-ios/`
 
@@ -377,16 +377,18 @@ cd build && zip -qry TVBox.ipa Payload
 
 ### 发版号
 
-改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 15），commit 后 CI 出新包并**自动发 Release**：
+改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 16），commit 后 CI 出新包并**自动发 Release**：
 
 ```
-tag        build15
-标题       TVBox 1.0.0 (build 15)
-资产       TVBox-1.0.15.ipa（未签名）+ TVBox-1.0.15.ipa.sha256
+tag        build16
+标题       TVBox 1.0.16 (build 16)
+资产       TVBox-1.0.16.ipa（未签名）+ TVBox-1.0.16.ipa.sha256
+安装后显示 版本 1.0.16（16）
 ```
 
-资产名的 `1.0.15` = `MARKETING_VERSION` 去掉末位（1.0）+ `CURRENT_PROJECT_VERSION`（15）。
-这个名字由 workflow 里「读版本号」步骤算出来，改版号不用动 workflow。
+`1.0.16` = `MARKETING_VERSION` 去掉末位（1.0）+ `CURRENT_PROJECT_VERSION`（16），由 workflow 的
+「读版本号」步骤算出来，再用 `xcodebuild MARKETING_VERSION=…` 覆盖进包 —— 所以设置里显示的
+版本号跟着每次构建走，不会永远停在 `1.0.0`。改版号不用动 workflow。
 
 不要改 `MARKETING_VERSION`（保持 `1.0.0`）。Release 步骤是幂等的：同名 tag 会先删再建，所以同一个版本号重跑不会撞，资产也会被覆盖成最新构建。发版需要 `permissions: contents: write`，已经写在 workflow 的 job 上——仓库默认 workflow 权限是 read，去掉这段会 403。
 
