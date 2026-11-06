@@ -16,7 +16,7 @@ packages:
 settings:
   base:
     MARKETING_VERSION: "1.0.0"
-    CURRENT_PROJECT_VERSION: "21"
+    CURRENT_PROJECT_VERSION: "22"
     SWIFT_VERSION: "5.0"
     ENABLE_BITCODE: NO
     # 警告不当错误：Xcode 16 的并发/弃用提示很多，不该阻断出包
