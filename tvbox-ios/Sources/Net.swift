@@ -23,6 +23,24 @@ final class Net {
                headers: [String: String] = [:],
                timeout: TimeInterval = 15,
                retry: Int = 1) async throws -> Data {
+        do {
+            return try await fetchOnce(urlString, headers: headers, timeout: timeout, retry: retry)
+        } catch {
+            // https 握手被中间链路掐掉时对端一个字节都不回（NSURLErrorSecureConnectionFailed）。
+            // 证书问题不会走到这里 —— TrustAllDelegate 已放开校验。同一批站点的 80 端口通常是通的，
+            // 降级再试一次，拿到的数据和 https 完全一样。
+            guard Net.canDowngrade(urlString, error: error) else { throw error }
+            let alt = Net.httpVariant(urlString)
+            let data = try await fetchOnce(alt, headers: headers, timeout: timeout, retry: retry)
+            Net.noteDowngrade(from: urlString, to: alt)
+            return data
+        }
+    }
+
+    private func fetchOnce(_ urlString: String,
+                           headers: [String: String],
+                           timeout: TimeInterval,
+                           retry: Int) async throws -> Data {
         guard let url = Net.makeURL(urlString) else {
             throw NetError.badURL(urlString)
         }
@@ -59,9 +77,42 @@ final class Net {
         return String(decoding: data, as: UTF8.self)
     }
 
+    // MARK: - TLS 降级
+
+    /// 能不能降到 http 取决于错误码，不是看域名。
+    /// -1200（secureConnectionFailed）= ClientHello 发出去后一个字节都没回来，
+    /// 典型是被链路按 SNI 掐掉；证书不受信是 -1201/-1202，不走这条路。
+    static func canDowngrade(_ urlString: String, error: Error) -> Bool {
+        guard urlString.lowercased().hasPrefix("https://") else { return false }
+        let e = error as NSError
+        return e.domain == NSURLErrorDomain && e.code == NSURLErrorSecureConnectionFailed
+    }
+
+    static func httpVariant(_ urlString: String) -> String {
+        guard let r = urlString.range(of: "://") else { return urlString }
+        return "http://" + String(urlString[r.upperBound...])
+    }
+
+    /// 被降级过的地址：诊断面板要能说清「这个站是走 http 才通的」
+    private static var downgrades: [String: String] = [:]
+    private static let downgradeLock = NSLock()
+
+    static func noteDowngrade(from: String, to: String) {
+        downgradeLock.lock()
+        downgrades[from] = to
+        downgradeLock.unlock()
+    }
+
+    /// 给诊断用：这条地址有没有被降级过，降到了哪
+    static func downgradeNote(for urlString: String) -> String? {
+        downgradeLock.lock()
+        defer { downgradeLock.unlock() }
+        guard let to = downgrades[urlString] else { return nil }
+        return "https 握手被阻断，已降级到 \(to)"
+    }
+
     /// 拉 JSON，容忍 BOM 与前后杂字符
-    func fetchJSON<T: Decodable>(_ type: T.Type, _ urlString: String, headers: [String: String] = [:]) async throws -> T {
-        let data = try await fetch(urlString, headers: headers)
+    func fetchJSON<T: Decodable>(_ type: T.Type, _ urlString: String, headers: [String: String] = [:]) async throws -> T {        let data = try await fetch(urlString, headers: headers)
         let cleaned = Self.stripJSONNoise(data)
         do {
             return try JSONDecoder().decode(T.self, from: cleaned)

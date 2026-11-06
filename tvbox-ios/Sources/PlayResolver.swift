@@ -81,6 +81,21 @@ enum PlayResolver {
         var p = await probe(s, headers: headers)
         notes.append("带 Referer 探测：\(p.describe)")
 
+        // 3.5) https 握手被链路掐掉时，同域名的 80 端口往往还通（表现是 iOS 报安全连接失败）
+        if !p.ok, s.lowercased().hasPrefix("https://") {
+            let alt = Net.httpVariant(s)
+            if alt != s {
+                let p2 = await probe(alt, headers: headers)
+                notes.append("换 http 探测：\(p2.describe)")
+                if p2.ok {
+                    notes.append("https 握手被阻断，改用 http（同一份数据，只是没加密）")
+                    Net.noteDowngrade(from: s, to: alt)
+                    s = alt
+                    p = p2
+                }
+            }
+        }
+
         // 4) 拿不到就按 parses 逐条试：type 1 走 json 接口，其余走 webview 嗅探
         if !p.ok {
             let attempts = await viaParses(s, parses: parses)
