@@ -18,6 +18,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Release 正文要列「上个版本以来的提交」，浅克隆里没有 tag 和历史
+          fetch-depth: 0
 
       - name: 读版本号
         id: ver
@@ -185,14 +188,25 @@ jobs:
         run: |
           set -e
           cd tvbox-ios
-          # 资产名带版本号：TVBox-1.0.12.ipa，别人下下来一眼知道是第几版
+          # 资产名带版本号：TVBox-1.0.17.ipa，别人下下来一眼知道是第几版
           IPA="TVBox-$FULL.ipa"
           cp build/TVBox.ipa "build/$IPA"
           ( cd build && shasum -a 256 "$IPA" > "$IPA.sha256" && cat "$IPA.sha256" )
 
           COMMIT="${GITHUB_SHA::8}"
+          # 上个版本以来的提交；有 tag 就按范围取，第一个版本就取最近 20 条
+          PREV=$(git describe --tags --abbrev=0 --match 'build*' 2>/dev/null || true)
+          if [ -n "$PREV" ]; then
+            RANGE="$PREV..HEAD"
+            echo "上个版本：$PREV"
+          else
+            RANGE=""
+            echo "没有更早的 tag，列最近 20 条提交"
+          fi
+          CHANGES=$(git log --no-merges --pretty='- %s （%h）' ${RANGE:-HEAD} | head -20)
+
           {
-            echo "### TVBox $VER (build $BUILD)"
+            echo "### TVBox $FULL (build $BUILD)"
             echo ""
             echo "未签名 ipa，装之前要自签：Sideloadly / AltStore（7 天，到期重签），或 TrollStore（免签，看系统支持）。"
             echo ""
@@ -203,6 +217,14 @@ jobs:
             echo "| 构建 | GitHub Actions macos-15 / commit \`$COMMIT\` |"
             echo "| 文件 | \`$IPA\` |"
             echo "| 校验 | \`shasum -a 256 -c $IPA.sha256\` |"
+            echo ""
+            echo "### 本次更新"
+            echo ""
+            if [ -n "$CHANGES" ]; then echo "$CHANGES"; else echo "- 无新提交"; fi
+            echo ""
+            if [ -n "$PREV" ]; then
+              echo "完整对比：https://github.com/$GITHUB_REPOSITORY/compare/$PREV...$TAG"
+            fi
           } > /tmp/notes.md
 
           # 同名 tag / release 先清掉，重跑和改同一版号都不会撞
@@ -211,8 +233,7 @@ jobs:
           gh release create "$TAG" \
             "build/$IPA" \
             "build/$IPA.sha256" \
-            --title "TVBox $VER (build $BUILD)" \
+            --title "TVBox $FULL (build $BUILD)" \
             --notes-file /tmp/notes.md \
-            --generate-notes \
             --target "$GITHUB_SHA"
           echo "Release 已发布：$TAG"
