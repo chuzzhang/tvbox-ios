@@ -1,0 +1,16 @@
+name: probe2
+on:
+  workflow_dispatch:
+jobs:
+  ml:
+    runs-on: macos-latest
+    steps:
+      - run: echo ok-macos-latest
+  m15:
+    runs-on: macos-15
+    steps:
+      - run: echo ok-macos-15
+  w:
+    runs-on: windows-latest
+    steps:
+      - run: echo ok-windows
