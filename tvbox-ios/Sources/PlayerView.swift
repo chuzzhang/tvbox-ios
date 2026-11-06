@@ -27,6 +27,10 @@ final class PlayerModel: ObservableObject {
     @Published var duration: Double = 0
     /// 直播流（m3u8 没有 ENDLIST）duration 是 indefinite，进度条只能禁用
     @Published var seekable = false
+    /// 应用内音量 0…1。iOS 不允许 App 直接改系统音量，这一层是叠在系统音量之上的系数
+    @Published var volume: Double = 1.0
+    /// 屏幕亮度 0…1，直接写 UIScreen.brightness；离场要还原，否则退出后屏幕一直是暗的
+    @Published var brightness: Double = Double(UIScreen.main.brightness)
 
     private(set) var player: AVPlayer?
     private var statusObs: NSKeyValueObservation?
@@ -37,6 +41,13 @@ final class PlayerModel: ObservableObject {
     private var proxy: HLSProxy?
     private var watchdog: Task<Void, Never>?
     private var ticker: Task<Void, Never>?
+    private var savedBrightness: CGFloat?
+
+    init() {
+        // 音量记住上次的：同一部剧下一集不用每次重调
+        let v = UserDefaults.standard.object(forKey: "player.volume") as? Double
+        volume = min(1, max(0, v ?? 1.0))
+    }
 
     #if canImport(MobileVLCKit)
     private(set) var vlc: VLCMediaPlayer?
@@ -91,7 +102,9 @@ final class PlayerModel: ObservableObject {
 
         let item = AVPlayerItem(asset: asset)
         let p = AVPlayer(playerItem: item)
+        activateAudioSession()
         p.automaticallyWaitsToMinimizeStalling = true
+        p.volume = Float(volume)
         player = p
         startTicker()
 
@@ -204,6 +217,46 @@ final class PlayerModel: ObservableObject {
         seek(to: position + delta)
     }
 
+    // MARK: 音量 / 亮度
+
+    /// 默认的 soloAmbient 会被静音开关掐掉声音，表现就是"音量怎么调都没声"。
+    /// 影视类 App 必须显式切到 playback：静音键也出声、锁屏能继续放。
+    private func activateAudioSession() {
+        let s = AVAudioSession.sharedInstance()
+        try? s.setCategory(.playback, mode: .moviePlayback, options: [])
+        try? s.setActive(true)
+    }
+
+    private func deactivateAudioSession() {
+        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+    }
+
+    func setVolume(_ v: Double) {
+        volume = min(1, max(0, v))
+        player?.volume = Float(volume)
+        UserDefaults.standard.set(volume, forKey: "player.volume")
+        #if canImport(MobileVLCKit)
+        // VLC 的音量是 0…200，跟 AVPlayer 的 0…1 不是一套刻度
+        vlc?.audio?.volume = Int32(volume * 200)
+        #endif
+    }
+
+    func setBrightness(_ v: Double) {
+        // 下限留 0.02：调到 0 之后手势还在，但屏幕全黑看不见任何东西
+        brightness = min(1, max(0.02, v))
+        UIScreen.main.brightness = CGFloat(brightness)
+    }
+
+    func captureBrightness() {
+        if savedBrightness == nil { savedBrightness = UIScreen.main.brightness }
+    }
+
+    func restoreBrightness() {
+        guard let b = savedBrightness else { return }
+        UIScreen.main.brightness = b
+        savedBrightness = nil
+    }
+
     /// 0.5 秒采样：进度条、播放/暂停图标都靠它驱动。
     /// 不用 Timer 是因为 Task 跟 model 生命周期绑在一起，teardown 一 cancel 就干净了。
     private func startTicker() {
@@ -288,6 +341,7 @@ final class PlayerModel: ObservableObject {
                 }
             }
         }
+        activateAudioSession()
         p.delegate = holder
         vlcDelegate = holder
         vlc = p
@@ -321,6 +375,7 @@ final class PlayerModel: ObservableObject {
 
     func teardown() {
         teardownAV()
+        deactivateAudioSession()
         #if canImport(MobileVLCKit)
         vlc?.stop()
         vlc?.drawable = nil
@@ -360,6 +415,15 @@ struct PlayerView: View {
     @State private var dragValue: Double = 0
     @State private var hideTask: Task<Void, Never>?
 
+    /// 竖拖 / 横拖的 HUD
+    private enum HUD { case volume, brightness, seek }
+    private enum DragAxis { case vertical, horizontal }
+    @State private var hud: HUD? = nil
+    @State private var hudTask: Task<Void, Never>?
+    @State private var dragAxis: DragAxis? = nil
+    @State private var dragStart: Double = 0
+    @State private var seekTarget: Double = 0
+
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
@@ -377,12 +441,19 @@ struct PlayerView: View {
                 #endif
             }
 
-            // 点画面开合控制条。这一层压在视频上面、控制条下面，
-            // 所以点按钮、拖滑块都不会被它吃掉
-            Color.clear
-                .contentShape(Rectangle())
-                .ignoresSafeArea()
-                .onTapGesture { toggleUI() }
+            // 手势层：点画面开合控制条；左半竖拖调亮度、右半竖拖调音量、横拖调进度。
+            // 压在视频上面、控制条下面，所以点按钮、拖滑块不会被它吃掉
+            GeometryReader { geo in
+                Color.clear
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 10)
+                            .onChanged { v in handleDrag(v, size: geo.size) }
+                            .onEnded { _ in endDrag() }
+                    )
+                    .onTapGesture { toggleUI() }
+            }
+            .ignoresSafeArea()
 
             if !model.ready && model.error == nil {
                 VStack(spacing: 10) {
@@ -452,17 +523,26 @@ struct PlayerView: View {
                 }
                 .transition(.opacity)
             }
+
+            if let h = hud {
+                hudView(h)
+                    .transition(.opacity)
+                    .allowsHitTesting(false)
+            }
         }
         .statusBar(hidden: true)
         .onAppear {
             model.prepare(urlString, siteBase: siteBase, parses: parses)
-            // 看片时别锁屏
+            // 看片时别锁屏；亮度先记下来，走的时候还原
             UIApplication.shared.isIdleTimerDisabled = true
+            model.captureBrightness()
             kickHide()
         }
         .onDisappear {
             model.teardown()
             hideTask?.cancel()
+            hudTask?.cancel()
+            model.restoreBrightness()
             UIApplication.shared.isIdleTimerDisabled = false
         }
     }
@@ -540,6 +620,101 @@ struct PlayerView: View {
         let h = total / 3600, m = (total % 3600) / 60, s = total % 60
         return h > 0 ? String(format: "%d:%02d:%02d", h, m, s)
                      : String(format: "%02d:%02d", m, s)
+    }
+
+    // MARK: - 手势：亮度 / 音量 / 进度
+
+    private func handleDrag(_ v: DragGesture.Value, size: CGSize) {
+        if dragAxis == nil {
+            let dv = abs(v.translation.height), dh = abs(v.translation.width)
+            guard max(dv, dh) > 6 else { return }
+            if dv >= dh {
+                dragAxis = .vertical
+                // 左半屏调亮度、右半屏调音量，从按下时那个值开始算增量
+                dragStart = v.startLocation.x < size.width / 2 ? model.brightness : model.volume
+            } else {
+                dragAxis = .horizontal
+                dragStart = model.position
+                seekTarget = model.position
+            }
+        }
+
+        switch dragAxis {
+        case .vertical?:
+            let delta = Double(-v.translation.height) / max(Double(size.height), 1)
+            if v.startLocation.x < size.width / 2 {
+                model.setBrightness(dragStart + delta)
+                showHUD(.brightness)
+            } else {
+                model.setVolume(dragStart + delta)
+                showHUD(.volume)
+            }
+        case .horizontal?:
+            guard model.seekable else { return }
+            let span = max(model.duration, 1)
+            let moved = Double(v.translation.width / max(size.width, 1)) * span
+            seekTarget = min(max(0, dragStart + moved), span)
+            showHUD(.seek)
+        case .none:
+            break
+        }
+    }
+
+    private func endDrag() {
+        if dragAxis == .horizontal, model.seekable, seekTarget > 0 {
+            model.seek(to: seekTarget)
+        }
+        dragAxis = nil
+        hideHUDSoon()
+    }
+
+    private func showHUD(_ h: HUD) {
+        hudTask?.cancel()
+        if hud != h { withAnimation(.easeOut(duration: 0.12)) { hud = h } }
+    }
+
+    private func hideHUDSoon() {
+        hudTask?.cancel()
+        hudTask = Task {
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            if Task.isCancelled { return }
+            await MainActor.run { withAnimation(.easeIn(duration: 0.2)) { hud = nil } }
+        }
+    }
+
+    @ViewBuilder
+    private func hudView(_ h: HUD) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: hudIcon(h)).font(.system(size: 15, weight: .semibold))
+            Text(hudLabel(h)).font(.caption.monospacedDigit())
+        }
+        .foregroundColor(.white)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .background(Color.black.opacity(0.55))
+        .clipShape(Capsule())
+    }
+
+    private func hudIcon(_ h: HUD) -> String {
+        switch h {
+        case .brightness:
+            return model.brightness > 0.66 ? "sun.max.fill"
+                 : (model.brightness > 0.33 ? "sun.max" : "sun.min")
+        case .volume:
+            if model.volume <= 0.001 { return "speaker.slash.fill" }
+            return model.volume > 0.66 ? "speaker.wave.3.fill"
+                 : (model.volume > 0.33 ? "speaker.wave.2.fill" : "speaker.wave.1.fill")
+        case .seek:
+            return "arrow.left.and.right"
+        }
+    }
+
+    private func hudLabel(_ h: HUD) -> String {
+        switch h {
+        case .brightness: return "亮度 \(Int((model.brightness * 100).rounded()))%"
+        case .volume: return "音量 \(Int((model.volume * 100).rounded()))%"
+        case .seek: return "\(Self.clock(seekTarget)) / \(Self.clock(model.duration))"
+        }
     }
 
     // MARK: - 控制条显隐
