@@ -97,7 +97,7 @@ bundle 里带着完整提交历史，clone 出来就是原样的仓库。
 
 ## 四、workflow 干了什么
 
-`.github/workflows/ios.yml`，跑在 GitHub 提供的 `macos-14`（Apple Silicon）上：
+`.github/workflows/ios.yml`，跑在 GitHub 提供的 `macos-15`（Apple Silicon）上：
 
 | 步骤 | 命令 | 作用 |
 |---|---|---|
@@ -145,7 +145,7 @@ schemes:
 
 **`The project 'TVBox' cannot be opened because it is in a future Xcode project file format (77)`**
 
-XcodeGen 新版按 Xcode 16 的格式写 `project.pbxproj`（`objectVersion 77`），而 `macos-14` 镜像默认的 `xcode-select` 还指着 15.4，读不了 77。
+XcodeGen 新版按 Xcode 16 的格式写 `project.pbxproj`（`objectVersion 77`），而 `macos-15` 镜像默认的 `xcode-select` 还指着 15.4，读不了 77。
 
 workflow 的「选择 Xcode」步骤会自动取镜像里最新的正式版，关键在于**先切再生成**：
 

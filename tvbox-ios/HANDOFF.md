@@ -25,7 +25,7 @@ Android TVBox（fongmi 内核）的 iOS 原生重写。输入是 TVBox 的 JSON 
 | 依赖 | SwiftSoup 2.7.0、ZIPFoundation 0.9.19（SPM） |
 | Bundle ID | `osc.tvbox.jun` |
 | 工程生成 | XcodeGen（`project.yml` → `TVBox.xcodeproj`，不入库） |
-| 构建机 | GitHub Actions `macos-14` + 最新正式版 Xcode（≥16） |
+| 构建机 | GitHub Actions `macos-15` + 最新正式版 Xcode（≥16） |
 | 包体 | 未签名 ipa，需自签后安装 |
 
 关键编译开关（`project.yml:20-27`）：
