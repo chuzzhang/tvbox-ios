@@ -44,6 +44,34 @@ enum ScriptResolver {
         return r
     }
 
+    /// .py 站点的结论要分清「上游没了」和「跑不了」，否则用户只会看到"加载失败"
+    private static func describePyScript(_ url: String) async -> [String] {
+        var notes: [String] = []
+        guard url.lowercased().hasPrefix("http") else {
+            notes.append("脚本是相对路径且补全失败（配置目录未知）")
+            return notes
+        }
+        do {
+            let got = try await Net.shared.fetchScriptTracked(url)
+            if let m = got.mirror { notes.append("脚本改用镜像：\(m)") }
+            let data = got.data
+            let text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
+            let low = text.lowercased()
+            if low.contains("<!doctype") || low.contains("<html") {
+                notes.append("上游返回的是网页不是脚本（\(data.count / 1024) KB）—— 多半开了防盗链，或文件已被替换")
+            } else if low.contains("import ") || low.contains("def ") || low.contains("class ") {
+                notes.append("脚本本身在：\(data.count / 1024) KB Python 源码，需要 CPython 3.x 运行时")
+                notes.append("它依赖 lxml / pyquery / requests 这类库，iOS 上没有对应运行时")
+                notes.append("要找回来只能把这段逻辑改写成 js（js spider 或 drpy 规则）")
+            } else {
+                notes.append("脚本内容不是 Python 源码（\(data.count) 字节），无法执行")
+            }
+        } catch {
+            notes.append("脚本拉取失败：\(error.localizedDescription)")
+        }
+        return notes
+    }
+
     private static func resolveUncached(_ site: Site,
                                         spider: SpiderStore.Report?,
                                         base: String? = nil) async throws -> Resolved {
@@ -59,6 +87,16 @@ enum ScriptResolver {
         if !extText.isEmpty {
             let brief = extText.count > 90 ? String(extText.prefix(90)) + "…" : extText
             notes.append("ext=\(brief)")
+        }
+
+        // 0) api 直接指向 .py 文件：这类站点（`py_黄果剧场` 对 `./js/ss/黄果剧场.py`）
+        //    以前会一路掉到「顶层 spider」分支，最后被标成「jar 内置」——
+        //    明明没有 jar 参与，标签和结论都是错的。先把它单独拦下来。
+        let apiIsPyFile = api.lowercased().hasSuffix(".py") || apiRaw.lowercased().hasSuffix(".py")
+        if apiIsPyFile {
+            notes.append("api 直接指向 python 脚本：\(api.isEmpty ? apiRaw : api)")
+            notes.append(contentsOf: await describePyScript(api.isEmpty ? apiRaw : api))
+            throw NetError.decode("站点「\(site.name)」是 python 脚本，iOS 上无法执行", notes.joined(separator: "\n"))
         }
 
         // 1) Pyramid（python 版 TVBox）：api 是 `py_xxx`，规则或脚本在 ext 里。

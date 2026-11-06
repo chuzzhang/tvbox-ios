@@ -1,6 +1,6 @@
 # TVBox iOS 交接文档
 
-版本：build 17（`CURRENT_PROJECT_VERSION: "17"`）  
+版本：build 18（`CURRENT_PROJECT_VERSION: "18"`）  
 最后更新：2026-11-07  
 项目根：`tvbox-ios/`
 
@@ -310,6 +310,25 @@ JSON 解它必然报 `Unexpected character 'C' around line 1, column 2` —— �
 - `ac=list` 的 `<video>` 里没有 `<pic>`，封面只有 `ac=videolist` 才有 —— 列表页走 videolist，别图省事用 list。
 - 线路名优先取 `<dd flag="…">`，没有就沿用它前面最近的 `<dt>`。
 
+### 4.12 python 站点：api 是 `.py` 还是 ext 是 `.py`，判定路径不同
+
+配置里两种写法都常见：
+
+| 写法 | 例子 | 判定 |
+|---|---|---|
+| `api` 是脚本路径 | `py_黄果剧场` → `api: ./js/ss/黄果剧场.py` | `apiIsPyFile`，走 `describePyScript` |
+| `api` 是 `py_xxx`，脚本在 `ext` | `py_xxx` + 长段 python 源码 | `site.isPyramid` + `pyScriptLike` |
+
+以前只判第二种，第一种（api 直接是 `.py`）会一路掉到最后，被标成「jar 内置」——
+可它根本没有 jar 参与。现在 `ScriptResolver` 第 0 步就把它拦下，并且**真去拉一次脚本**，
+把三种情况分开写：
+
+- 200 + Python 源码 → 「脚本本身在：40 KB，需要 CPython 3.x」，附依赖说明
+- 200 + HTML → 「上游返回的是网页不是脚本，多半开了防盗链」
+- 404/401 → 上游已删
+
+`Site.routeLabel` 也要跟着认 `api` 的 `.py` 后缀，否则列表里显示的还是「jar 内置」。
+
 ## 5. 持久化
 
 全部 `UserDefaults`，没有 CoreData。
@@ -377,21 +396,21 @@ cd build && zip -qry TVBox.ipa Payload
 
 ### 发版号
 
-改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 17），commit 后 CI 出新包并**自动发 Release**：
+改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 18），commit 后 CI 出新包并**自动发 Release**：
 
 ```
-tag        build17
-标题       TVBox 1.0.17 (build 17)
-资产       TVBox-1.0.17.ipa（未签名）+ TVBox-1.0.17.ipa.sha256
+tag        build18
+标题       TVBox 1.0.18 (build 18)
+资产       TVBox-1.0.18.ipa（未签名）+ TVBox-1.0.18.ipa.sha256
 正文       自签说明 + 包信息 + 本次更新（上个 tag 以来的提交）+ 对比链接
-安装后显示 版本 1.0.17（17）
+安装后显示 版本 1.0.18（18）
 ```
 
 正文里的更新列表是自己用 `git log $PREV..HEAD` 生成的，**不要换回 `--generate-notes`** ——
 仓库全是直接 push、没有 PR，GitHub 的自动笔记只会给一行 compare 链接，等于没写。
 checkout 必须 `fetch-depth: 0`，浅克隆里 `git describe --tags` 取不到上一个版本。
 
-`1.0.17` = `MARKETING_VERSION` 去掉末位（1.0）+ `CURRENT_PROJECT_VERSION`（17），由 workflow 的
+`1.0.18` = `MARKETING_VERSION` 去掉末位（1.0）+ `CURRENT_PROJECT_VERSION`（18），由 workflow 的
 「读版本号」步骤算出来，再用 `xcodebuild MARKETING_VERSION=…` 覆盖进包 —— 所以设置里显示的
 版本号跟着每次构建走，不会永远停在 `1.0.0`。改版号不用动 workflow。
 

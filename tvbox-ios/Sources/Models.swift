@@ -233,6 +233,8 @@ struct Site: Codable, Identifiable {
         let a = api.lowercased()
         if a.contains(".js") { return "js 脚本" }
         if a.contains(".jar") { return "jar 脚本" }
+        // api 直接是 .py 文件时，ext 往往是空的，不能只看 ext 判断
+        if a.hasSuffix(".py") || a.contains(".py?") { return "py 脚本" }
         if isPyramid {
             let e = Drpy.extText(ext).lowercased()
             return e.hasSuffix(".py") ? "py 脚本" : "py 规则"
