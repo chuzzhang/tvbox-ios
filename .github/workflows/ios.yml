@@ -3,8 +3,14 @@ name: build-ipa
 on:
   push:
     branches: [main]
+    # 只列真正影响产物的路径：tools/ 和文档改动不该触发一次 5 分钟的构建
     paths:
-      - 'tvbox-ios/**'
+      - 'tvbox-ios/Sources/**'
+      - 'tvbox-ios/Resources/**'
+      - 'tvbox-ios/tests/**'
+      - 'tvbox-ios/project.yml'
+      - 'tvbox-ios/Info.plist'
+      - 'tvbox-ios/Assets.xcassets/**'
       - '.github/workflows/ios.yml'
   workflow_dispatch:
 

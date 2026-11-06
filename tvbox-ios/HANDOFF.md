@@ -1,6 +1,6 @@
 # TVBox iOS 交接文档
 
-版本：build 19（`CURRENT_PROJECT_VERSION: "19"`）  
+版本：build 20（`CURRENT_PROJECT_VERSION: "20"`）  
 最后更新：2026-11-07  
 项目根：`tvbox-ios/`
 
@@ -81,6 +81,8 @@ tvbox-ios/
 │   ├── check_config.py            配置体检：站点分型 + spider 包识别 + 探活
 │   ├── check_tls.py               域名 TLS 体检：ok / sni-blocked / tls-broken / dead
 │   ├── dex_scan.py                从 spider jar 里抽每个类的接口字符串（改写 js 的第一步）
+│   ├── frida_dump_wex.js          wexguard 加固壳的 dex 提取
+│   ├── frida_hook_http.js         抓 jar 站点真实请求（okhttp / URLConnection）
 │   ├── frida_dump_wex.js          加固壳 dump（hook DexClassLoader / 内存扫 dex）
 │   └── make_icon.py               图标生成
 ├── tests/                         6 个 node 单测，共 126 项
@@ -566,7 +568,17 @@ for f in tests/*.test.js; do node "$f"; done
    实测 `clun.top/pg.jar`（4.6 MB / 4467 类）：站点类（`Jable`、`Sukebei`、`Netflav`、`Xojav`）
    都是几十条字符串的薄壳，真正逻辑在 `com.github.catvod.parser.merge.*` 那一堆单字母混淆类里，
    域名在运行期拼装（包内 `ShA1sUm.dat` 也有嫌疑）。**对这种包扫字符串出不来接口**，
-   得 jadx 跟调用链，或者真机 frida hook 网络层抓真实请求。
+   得 jadx 跟调用链，或者真机 frida hook 网络层抓真实请求：
+
+   ```bash
+   adb push tools/frida_hook_http.js /data/local/tmp/
+   frida -U -f com.fongmi.android.tv -l /data/local/tmp/frida_hook_http.js --no-pause
+   # 在 App 里点开目标站点，进分类、进详情、点播放，各触发一次
+   adb pull /data/local/tmp/httpdump.log
+   ```
+
+   hook 的是 `okhttp3.Request$Builder.build`（URL/header/body）和 `Response.body()`
+   （JSON/XML 前 800 字）。jar 站点天天改版，抓包比静态逆向快一个数量级。
 3. **Python 站点** — 需要 CPython 3.8 静态交叉编译到 arm64-apple-ios，工作量 3–5 周。TVBox 的 python 站点能热更新，做一次之后成本归零，是长期最优但短期最贵。
 4. **直播** — 配置里 `lives` 是明文的，播放器已能播 m3u；EPG 还没接。
 5. **`parses` 解析器** — 已做（build 10）：type 0 走 webview 嗅探，type 1 走 json 接口，见 4.9。还没覆盖的：
