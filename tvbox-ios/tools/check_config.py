@@ -24,6 +24,7 @@ import ssl
 import sys
 import urllib.error
 import urllib.request
+from urllib.parse import urljoin
 
 UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
       "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1")
@@ -48,6 +49,18 @@ def fetch(url, timeout=12, referer=None):
             return b"", e.code, None
     except Exception as e:
         return b"", 0, str(e)
+
+
+def resolve(base, rel):
+    """配置里的 spider / api 常写成 ./pg.jar 这种相对路径，基准是配置文件所在目录。"""
+    rel = (rel or "").strip()
+    if not rel:
+        return ""
+    if rel.lower().startswith(("http://", "https://")):
+        return rel
+    if not base:
+        return ""
+    return urljoin(base, rel)
 
 
 def strip_suffix(url):
@@ -125,6 +138,8 @@ def inspect_spider(url):
     url = strip_suffix(url)
     if not url:
         return None
+    if not url.lower().startswith(("http://", "https://")):
+        return {"url": url, "kind": "相对路径", "error": "本地文件配置无法解析相对 spider，用配置 URL 跑本工具"}
     data, status, err = fetch(url, timeout=30)
     if err or not data:
         return {"url": url, "error": err or f"HTTP {status}"}
@@ -195,7 +210,8 @@ def main():
     sites = cfg.get("sites") or []
     parses = cfg.get("parses") or []
     lives = cfg.get("lives") or []
-    spider = inspect_spider(cfg.get("spider") or "")
+    base = args.target if args.target.lower().startswith(("http://", "https://")) else ""
+    spider = inspect_spider(resolve(base, cfg.get("spider") or ""))
 
     rows = []
     for s in sites:

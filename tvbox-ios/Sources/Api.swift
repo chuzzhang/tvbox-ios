@@ -125,41 +125,85 @@ struct CMSApi {
 
     /// 分类列表
     func categories() async throws -> [VCategory] {
-        let u = url(["ac": "list"])
-        let resp = try await Net.shared.fetchJSON(CMSListResponse.self, u, headers: headers)
-        if let c = resp.class, !c.isEmpty { return c }
-        // 部分源不支持 ac=list，用 detail 首页兜底
-        let resp2 = try await Net.shared.fetchJSON(CMSListResponse.self, url(["ac": "detail"]), headers: headers)
+        let data = try await Net.shared.fetch(url(["ac": "list"]), headers: headers)
+
+        if CMSXml.looksLikeXML(data) {
+            let cats = CMSXml.list(data).cats
+            // XML 源的 <class> 经常是空的（只给 tid 不给名字），至少留一个「全部」当兜底
+            return cats.isEmpty ? [VCategory(type_id: "", type_name: "全部", type_pid: nil)] : cats
+        }
+
+        if let resp = try? JSONDecoder().decode(CMSListResponse.self, from: Net.stripJSONNoise(data)),
+           let c = resp.class, !c.isEmpty {
+            return c
+        }
+
+        // 部分源 ac=list 不返回 class，用 detail 首页兜底
+        let d2 = try await Net.shared.fetch(url(["ac": "detail"]), headers: headers)
+        if CMSXml.looksLikeXML(d2) {
+            let cats = CMSXml.list(d2).cats
+            if !cats.isEmpty { return cats }
+            return [VCategory(type_id: "", type_name: "全部", type_pid: nil)]
+        }
+        let resp2 = try JSONDecoder().decode(CMSListResponse.self, from: Net.stripJSONNoise(d2))
         return resp2.class ?? []
     }
 
     /// 分类内容分页
     func list(tid: String, page: Int) async throws -> (items: [VItem], pagecount: Int) {
-        let u = url(["ac": "videolist", "t": tid, "pg": String(page)])
-        var resp = try await Net.shared.fetchJSON(CMSListResponse.self, u, headers: headers)
+        var params: [String: String] = ["ac": "videolist", "pg": String(page)]
+        // 没有分类（XML 源常见）时不传 t，接口默认给全量
+        if !tid.isEmpty { params["t"] = tid }
 
-        if (resp.list ?? []).isEmpty {
-            let u2 = url(["ac": "detail", "t": tid, "pg": String(page)])
-            resp = try await Net.shared.fetchJSON(CMSListResponse.self, u2, headers: headers)
+        var r = try await loadList(params)
+        if r.items.isEmpty {
+            var alt = params
+            alt["ac"] = "detail"
+            let r2 = try await loadList(alt)
+            if !r2.items.isEmpty { r = r2 }
         }
-        return (resp.list ?? [], max(resp.pagecount ?? 1, 1))
+        return (r.items, r.pageCount)
     }
 
     /// 详情
     func detail(id: String) async throws -> VDetail? {
-        let u = url(["ac": "detail", "ids": id])
-        let resp = try await Net.shared.fetchJSON(CMSDetailResponse.self, u, headers: headers)
+        let data = try await Net.shared.fetch(url(["ac": "detail", "ids": id]), headers: headers)
+        if CMSXml.looksLikeXML(data) { return CMSXml.detail(data) }
+        let resp = try JSONDecoder().decode(CMSDetailResponse.self, from: Net.stripJSONNoise(data))
         return resp.list?.first
     }
 
     /// 搜索
     func search(wd: String, page: Int = 1) async throws -> [VItem] {
-        let u = url(["wd": wd, "ac": "videolist", "pg": String(page)])
-        var resp = try await Net.shared.fetchJSON(CMSListResponse.self, u, headers: headers)
-        if (resp.list ?? []).isEmpty {
-            let u2 = url(["wd": wd, "ac": "detail", "pg": String(page)])
-            resp = try await Net.shared.fetchJSON(CMSListResponse.self, u2, headers: headers)
+        var params: [String: String] = ["wd": wd, "ac": "videolist", "pg": String(page)]
+        var items = try await loadList(params).items
+        if items.isEmpty {
+            params["ac"] = "detail"
+            items = try await loadList(params).items
         }
-        return resp.list ?? []
+        return items
+    }
+
+    // MARK: 取数（JSON / XML 两种口径）
+
+    private func loadList(_ params: [String: String]) async throws -> (items: [VItem], pageCount: Int) {
+        let data = try await Net.shared.fetch(url(params), headers: headers)
+
+        if CMSXml.looksLikeXML(data) {
+            let r = CMSXml.list(data)
+            return (r.items, r.pageCount)
+        }
+
+        do {
+            let resp = try JSONDecoder().decode(CMSListResponse.self, from: Net.stripJSONNoise(data))
+            return (resp.list ?? [], max(resp.pagecount ?? 1, 1))
+        } catch {
+            // 有的源 Content-Type 写着 json，内容还是 xml（`Unexpected character 'C'` 那种）
+            let r = CMSXml.list(data)
+            if !r.items.isEmpty { return (r.items, r.pageCount) }
+            throw NetError.decode(String(describing: error),
+                                  String(decoding: data.prefix(200), as: UTF8.self))
+        }
     }
 }
+

@@ -1,6 +1,6 @@
 # TVBox iOS 交接文档
 
-版本：build 14（`CURRENT_PROJECT_VERSION: "14"`）  
+版本：build 15（`CURRENT_PROJECT_VERSION: "15"`）  
 最后更新：2026-11-07  
 项目根：`tvbox-ios/`
 
@@ -45,11 +45,12 @@ OTHER_LDFLAGS: "-ObjC"              # JSContext 的 category 需要
 tvbox-ios/
 ├── project.yml                    XcodeGen 工程描述，版本号在这里
 ├── Info.plist                     ATS 放开（配置和流地址大量是 http）
-├── Sources/                       21 个文件，5342 行
+├── Sources/                       22 个文件，6124 行
 │   ├── App.swift                  入口、底部 Tab、配置页（导入/诊断/错误详情）
 │   ├── Store.swift                AppState：配置、站点、历史、收藏、死站点集合
 │   ├── Models.swift               BoxConfig / Site / Live / Parse / VItem / VDetail / PlayLine
 │   ├── Api.swift                  ConfigLoader（配置加载 + 多仓解码）、CMSApi（maccms 客户端）
+│   ├── CMSXml.swift               maccms 的 XML 输出解析（api/xml.php 这类源）
 │   ├── Net.swift                  HTTP 层：重试、镜像兜底、错误分类
 │   ├── URLKit.swift               相对路径解析（见 4.1）
 │   ├── JarScript.swift            ScriptResolver：决定一个站点该走哪套引擎
@@ -286,6 +287,29 @@ maccms 的 `class` 里有 `type_pid`。很多源（例如 `api.souavzy.vip`）�
 `VCategory.type_pid` 走 `Loose.text` 取（maccms 里是数字），加字段时别忘了同步
 `extension VCategory` 的 `init(from:)` / `encode(to:)` 两处，只改 struct 声明不会生效。
 
+### 4.11 CMS 除了 JSON 还有一种 XML 输出
+
+有些源只给 XML（`api/xml.php`，或 `?at=xml`），返回：
+
+```xml
+<rss version="5.1"><list page="1" pagecount="1284" recordcount="25673">
+  <video><id>258422</id><tid>29</tid><name><![CDATA[stars-805ch new]]></name>
+         <pic/><note/><dt>ckplayer</dt>
+         <dl><dd flag="ckplayer"><![CDATA[第1集$http://…]]></dd></dl>
+  </video>
+</list><class><ty id="26">国产剧</ty></class></rss>
+```
+
+JSON 解它必然报 `Unexpected character 'C' around line 1, column 2` —— 那个 C 是 `<![CDATA[` 的 C。
+
+- `CMSXml.looksLikeXML` 看首字节是不是 `<`；`CMSApi.loadList` 先判 XML 再退回 JSON，
+  Content-Type 写着 json、内容其实是 xml 的源也覆盖到了。
+- CDATA 必须走 `parser(_:foundCDATA:)`，`foundCharacters` 收不到，漏了所有中文名和播放地址都是空。
+- `<list>` 的 `pagecount` 是**属性**不是子节点。
+- `ac=list` 时 `<class>` 常常是空壳（只给 `tid` 不给名字），此时兜底成一个「全部」分类，请求不带 `t`。
+- `ac=list` 的 `<video>` 里没有 `<pic>`，封面只有 `ac=videolist` 才有 —— 列表页走 videolist，别图省事用 list。
+- 线路名优先取 `<dd flag="…">`，没有就沿用它前面最近的 `<dt>`。
+
 ## 5. 持久化
 
 全部 `UserDefaults`，没有 CoreData。
@@ -353,15 +377,15 @@ cd build && zip -qry TVBox.ipa Payload
 
 ### 发版号
 
-改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 14），commit 后 CI 出新包并**自动发 Release**：
+改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 15），commit 后 CI 出新包并**自动发 Release**：
 
 ```
-tag        build14
-标题       TVBox 1.0.0 (build 14)
-资产       TVBox-1.0.14.ipa（未签名）+ TVBox-1.0.14.ipa.sha256
+tag        build15
+标题       TVBox 1.0.0 (build 15)
+资产       TVBox-1.0.15.ipa（未签名）+ TVBox-1.0.15.ipa.sha256
 ```
 
-资产名的 `1.0.14` = `MARKETING_VERSION` 去掉末位（1.0）+ `CURRENT_PROJECT_VERSION`（14）。
+资产名的 `1.0.15` = `MARKETING_VERSION` 去掉末位（1.0）+ `CURRENT_PROJECT_VERSION`（15）。
 这个名字由 workflow 里「读版本号」步骤算出来，改版号不用动 workflow。
 
 不要改 `MARKETING_VERSION`（保持 `1.0.0`）。Release 步骤是幂等的：同名 tag 会先删再建，所以同一个版本号重跑不会撞，资产也会被覆盖成最新构建。发版需要 `permissions: contents: write`，已经写在 workflow 的 job 上——仓库默认 workflow 权限是 read，去掉这段会 403。

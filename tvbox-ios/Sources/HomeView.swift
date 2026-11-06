@@ -196,7 +196,7 @@ struct FeedView: View {
             }
             roots = top.isEmpty ? cats : top
             rootId = roots.first?.type_id ?? ""
-            kids = allCats.filter { ($0.type_pid ?? "") == rootId }
+            kids = children(of: rootId)
             // 「中文传媒 / 国产 / 明星网黄」这类父分类本身不挂片子，只有子分类有内容。
             // 默认直接落到第一个子分类，否则一进站点就是「该分类没有返回内容」。
             current = kids.first?.type_id ?? rootId
@@ -211,7 +211,7 @@ struct FeedView: View {
     private func select(root c: VCategory) {
         guard rootId != c.type_id else { return }
         rootId = c.type_id
-        kids = allCats.filter { ($0.type_pid ?? "") == c.type_id }
+        kids = children(of: c.type_id)
         current = kids.first?.type_id ?? c.type_id
         items = []
         page = 1
@@ -227,6 +227,12 @@ struct FeedView: View {
         page = 1
         err = nil
         Task { await reload() }
+    }
+
+    /// 顶层 id 为空（XML 源常见，只有一个「全部」）时不该再列一遍子分类
+    private func children(of tid: String) -> [VCategory] {
+        guard !tid.isEmpty else { return [] }
+        return allCats.filter { ($0.type_pid ?? "") == tid && $0.type_id != tid }
     }
 
     private func nameOf(_ tid: String) -> String {
