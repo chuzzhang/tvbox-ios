@@ -25,7 +25,7 @@ Android TVBox（fongmi 内核）的 iOS 原生重写。输入是 TVBox 的 JSON 
 | 依赖 | SwiftSoup 2.7.0、ZIPFoundation 0.9.19（SPM） |
 | Bundle ID | `osc.tvbox.jun` |
 | 工程生成 | XcodeGen（`project.yml` → `TVBox.xcodeproj`，不入库） |
-| 构建机 | GitHub Actions `macos-15` + 最新正式版 Xcode（≥16） |
+| 构建机 | GitHub Actions `macos-15` + 最新正式版 Xcode（实测 Xcode 26.3，build 约 4.5 分钟） |
 | 包体 | 未签名 ipa，需自签后安装 |
 
 关键编译开关（`project.yml:20-27`）：
@@ -452,7 +452,8 @@ for f in tests/*.test.js; do node "$f"; done
 | 嗅探到了地址但播放 403 | `ParseAttempt.headers` | 流认播放页 Referer，不是站点根 |
 | CI 报 `MODULE_NOT_FOUND` | workflow 的测试步骤 | 有人把逐文件点名改回 glob |
 | CI 报 `exit code 65` | artifact 里的 `build.log` | 下载 `TVBox-build-log`，`error:` 行已经在日志里打出来了 |
-| CI 报 `future Xcode project file format (77)` | workflow 选 Xcode 那步 | 镜像默认 Xcode < 16 |
+| CI 报 `future Xcode project file format (77)` | workflow 选 Xcode 那步 | 镜像默认 Xcode < 16，被 `xcode-select` 切到旧版 |
+| CI 1 秒内 `cancelled`、job 的 `steps` 是 0、`runner_name` 为空 | `runs-on` 的镜像标签 | 该镜像已下线（`macos-14` 就是这样），换 `macos-15`。用一条 `ubuntu-latest` job 对照可排除额度问题 |
 
 ---
 
