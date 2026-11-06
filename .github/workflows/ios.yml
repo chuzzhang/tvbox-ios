@@ -214,7 +214,7 @@ jobs:
           {
             echo "### TVBox $FULL (build $BUILD)"
             echo ""
-            echo "未签名 ipa，装之前要自签：Sideloadly / AltStore（7 天，到期重签），或 TrollStore（免签，看系统支持）。"
+            echo "未签名 ipa，装之前要自签：Sideloadly / AltStore（7 天，到期重签），全能签 / 轻松签，TrollStore（免签，看系统支持）。"
             echo ""
             echo "| 项 | 值 |"
             echo "|---|---|"
