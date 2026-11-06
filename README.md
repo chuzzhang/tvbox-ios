@@ -265,8 +265,8 @@ dex 外部依赖：java.lang(46) java.util(32) java.io(17) okhttp3(17) java.util
 4. 首页导航里带 `vodtype`/`vodshow`/`list` 的链接
 
 `class_parse` 的 type_id 是正则裁出来的，会直接拼进 `url` 模板：
-正则 `.pro/(.*)` 对 `https://ddys.pro/pro/movie` 得到 `pro/movie`，配合 `url: "/fyclass/page/fypage/"`
-拼出 `https://ddys.pro/pro/movie/page/1/`。正则没匹配上就退回整条链接。
+正则 `.pro/(.*)` 对 `https://demo-vod.example/pro/movie` 得到 `pro/movie`，配合 `url: "/fyclass/page/fypage/"`
+拼出 `https://demo-vod.example/pro/movie/page/1/`。正则没匹配上就退回整条链接。
 
 ### 区分「上游挂了」和「客户端做不到」
 

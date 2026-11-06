@@ -252,11 +252,6 @@ function _why(url) {
         if (typeof __httpNote === 'function') w = String(__httpNote(url) || '');
     } catch (e) { w = ''; }
     if (!w) w = '空响应';
-    var host = _host();
-    // 已知会换域名的站：把备用域名一并写出来，省得对着「0 字符」猜
-    if (/\/\/ddys\./i.test(host) || /ddys\.(pro|io|tv|app|one|beauty|buzz|store|live)/i.test(host)) {
-        w += '；该站备用域名（官网 ddys.live 公布）：ddys.io / ddys.beauty / ddys.buzz / ddys.store';
-    }
     return w;
 }
 

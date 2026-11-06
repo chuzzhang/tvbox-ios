@@ -341,7 +341,7 @@ enum Loose {
 struct VCategory: Codable, Identifiable, Hashable {
     var type_id: String
     var type_name: String
-    /// 父分类 id：0 或空表示顶层。有些源这一级（中文传媒、国产、明星网黄）本身
+    /// 父分类 id：0 或空表示顶层。有些源这一级（分组那一层）本身
     /// 不挂片子，只有子分类有内容，点父分类就会拿到空列表
     var type_pid: String?
     var id: String { type_id }

@@ -1,6 +1,6 @@
 # TVBox iOS 交接文档
 
-版本：build 20（`CURRENT_PROJECT_VERSION: "20"`）  
+版本：build 21（`CURRENT_PROJECT_VERSION: "21"`）  
 最后更新：2026-11-07  
 项目根：`tvbox-ios/`
 
@@ -85,7 +85,7 @@ tvbox-ios/
 │   ├── frida_hook_http.js         抓 jar 站点真实请求（okhttp / URLConnection）
 │   ├── frida_dump_wex.js          加固壳 dump（hook DexClassLoader / 内存扫 dex）
 │   └── make_icon.py               图标生成
-├── tests/                         6 个 node 单测，共 126 项
+├── tests/                         6 个 node 单测，共 125 项
 └── Assets.xcassets/
 ```
 
@@ -278,9 +278,9 @@ http URL
 
 ### 4.10 CMS 分类可能是两级的，父分类经常是空的
 
-maccms 的 `class` 里有 `type_pid`。很多源（例如 `api.souavzy.vip`）顶层分类只做分组，
-本身一条片子都不挂：`?ac=videolist&t=20`（中文传媒）返回 `total=0`，
-只有子分类 `t=24`（传媒-麻豆传媒）才有数据。
+maccms 的 `class` 里有 `type_pid`。很多源（例如 `api.example.com`）顶层分类只做分组，
+本身一条片子都不挂：`?ac=videolist&t=20`（父分类）返回 `total=0`，
+只有子分类 `t=24`（父分类下的具体栏目）才有数据。
 
 `FeedView` 因此拆成两行分类条：
 
@@ -320,7 +320,7 @@ JSON 解它必然报 `Unexpected character 'C' around line 1, column 2` —— �
 
 | 写法 | 例子 | 判定 |
 |---|---|---|
-| `api` 是脚本路径 | `py_黄果剧场` → `api: ./js/ss/黄果剧场.py` | `apiIsPyFile`，走 `describePyScript` |
+| `api` 是脚本路径 | `py_xxx` → `api: ./js/ss/xxx.py` | `apiIsPyFile`，走 `describePyScript` |
 | `api` 是 `py_xxx`，脚本在 `ext` | `py_xxx` + 长段 python 源码 | `site.isPyramid` + `pyScriptLike` |
 
 以前只判第二种，第一种（api 直接是 `.py`）会一路掉到最后，被标成「jar 内置」——
@@ -332,6 +332,23 @@ JSON 解它必然报 `Unexpected character 'C' around line 1, column 2` —— �
 - 404/401 → 上游已删
 
 `Site.routeLabel` 也要跟着认 `api` 的 `.py` 后缀，否则列表里显示的还是「jar 内置」。
+
+### 4.13 仓库里不放真实站点/配置地址
+
+文档、注释、测试夹具、工具示例里一律用虚构域名：
+
+```
+example.com / example.org       通用示例
+demo-vod.example                drpy 测试里的假站
+api.example.com                 采集接口示例
+```
+
+排查问题时把真实域名临时贴进对话或本地文件，不要提交。测试夹具换域名时要留意
+`class_parse` 那种带正则的规则（`.pro/(.*)` 会随 host 变化裁出不同的 type_id），
+改完把对应断言一起改，`node tests/*.test.js` 必须全绿。
+
+运行时也不带任何站点特判：`drpy_lite.js` 里曾经有过"某个站返回空就提示它的备用域名"
+的分支，已经删掉 —— 这类信息会随站点一起过期，而且等于把站名写进了 App。
 
 ## 5. 持久化
 
@@ -445,14 +462,14 @@ cd tvbox-ios
 for f in tests/*.test.js; do node "$f"; done
 ```
 
-126 项，覆盖：
+125 项，覆盖：
 
 | 文件 | 项数 | 覆盖点 |
 |---|---|---|
 | `drpy_lite.test.js` | 18 | 规则解释器主流程、线路名、`body&&` 剥离 |
 | `drpy_jsrule.test.js` | 13 | js 规则文件、搜索词编码 |
 | `drpy_classparse.test.js` | 13 | 四段 class_parse、正则捕获、失败日志 |
-| `drpy_netfail.test.js` | 11 | 非 2xx 不解析、错误文案 |
+| `drpy_netfail.test.js` | 10 | 非 2xx 不解析、错误文案 |
 | `drpy_pyramid.test.js` | 18 | pyramid 规则语义、搜索编码 |
 | `parse_webview.test.js` | 53 | sniff_rules 规则、hook 脚本（vm 假 DOM 跑通 XHR/确认升级）、Swift 接线 |
 
@@ -561,12 +578,12 @@ for f in tests/*.test.js; do node "$f"; done
    改写的第一个动作是搞清楚"这个 csp_ 类请求了哪些地址"，`tools/dex_scan.py` 就是干这个的：
 
    ```bash
-   python tools/dex_scan.py pg.jar --site Jable        # 只看某个站点类
-   python tools/dex_scan.py pg.jar --all --site GM     # 不过滤，原样吐字符串
+   python tools/dex_scan.py spider.jar --site Spider       # 只看某个站点类
+   python tools/dex_scan.py spider.jar --all --site GM     # 不过滤，原样吐字符串
    ```
 
-   实测 `clun.top/pg.jar`（4.6 MB / 4467 类）：站点类（`Jable`、`Sukebei`、`Netflav`、`Xojav`）
-   都是几十条字符串的薄壳，真正逻辑在 `com.github.catvod.parser.merge.*` 那一堆单字母混淆类里，
+   实测一个 4.6 MB / 4467 类的 spider.jar：站点实现类都只有几十条字符串的薄壳，
+   真正逻辑在 `com.github.catvod.parser.merge.*` 那一堆单字母混淆类里，
    域名在运行期拼装（包内 `ShA1sUm.dat` 也有嫌疑）。**对这种包扫字符串出不来接口**，
    得 jadx 跟调用链，或者真机 frida hook 网络层抓真实请求：
 

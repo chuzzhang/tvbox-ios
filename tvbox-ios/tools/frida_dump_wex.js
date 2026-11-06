@@ -3,7 +3,7 @@
  *
  * 适用：TVBox 配置里 api 是 csp_*Guard 的站点，spider 包里有
  *       assets/wexshinidie.guard + assets/wexguard_v7.so / v8.so
- *       （例：https://9280.kstore.space/aiwex.json 的那 100 个站点）
+ *       （例：https://example.com/tvbox.json 的那 100 个站点）
  *
  * 原理：这个壳不改 dex，是把真 dex 加密后放在 .guard 里，运行时由 so 解密，
  *       再交给 DexClassLoader / InMemoryDexClassLoader 加载。所以不去破 so，

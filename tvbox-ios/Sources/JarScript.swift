@@ -89,7 +89,7 @@ enum ScriptResolver {
             notes.append("ext=\(brief)")
         }
 
-        // 0) api 直接指向 .py 文件：这类站点（`py_黄果剧场` 对 `./js/ss/黄果剧场.py`）
+        // 0) api 直接指向 .py 文件：这类站点（`py_xxx` 对 `./js/ss/xxx.py`）
         //    以前会一路掉到「顶层 spider」分支，最后被标成「jar 内置」——
         //    明明没有 jar 参与，标签和结论都是错的。先把它单独拦下来。
         let apiIsPyFile = api.lowercased().hasSuffix(".py") || apiRaw.lowercased().hasSuffix(".py")

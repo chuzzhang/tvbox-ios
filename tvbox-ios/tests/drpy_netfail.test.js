@@ -36,8 +36,8 @@ function check(name, cond, extra) {
 
 const rule = `
 var rule = {
-    title: 'ddys',
-    host: 'https://ddys.pro',
+    title: 'demo',
+    host: 'https://demo-vod.example',
     url: '/fyclass/page/fypage/',
     searchUrl: '/?s=**&post_type=post',
     class_parse: '#primary-menu li.menu-item;a&&Text;a&&href;.pro/(.*)',
@@ -55,9 +55,8 @@ check('分类为空', Array.isArray(home1.class) && home1.class.length === 0, ho
 check('日志带上 HTTP 状态', log1.indexOf('HTTP 502') >= 0, log1);
 check('日志区分「请求失败」而不是「选择器没抓到」',
   log1.indexOf('首页请求失败') >= 0 && log1.indexOf('class_parse 没抓到') < 0, log1);
-check('告知 ddys 备用域名', log1.indexOf('ddys.io') >= 0, log1);
 check('只请求一次首页（失败也不重试）',
-  s1.hits.filter(u => u === 'https://ddys.pro').length === 1, s1.hits);
+  s1.hits.filter(u => u === 'https://demo-vod.example').length === 1, s1.hits);
 
 /* ---------- 场景 2：原生桥没给原因（老版本 / 异常） ---------- */
 console.log('首页空响应 · 兜底文案');
@@ -67,19 +66,19 @@ const log2 = (s2.sandbox.__drpy_log__ || []).join('\n');
 check('仍给出「空响应」', log2.indexOf('空响应') >= 0, log2);
 check('分类为空', home2.class.length === 0, home2);
 
-/* ---------- 场景 3：非 ddys 站点不出现 ddys 提示 ---------- */
-console.log('其他站点 · 不误报备用域名');
-const rule3 = rule.replace('https://ddys.pro', 'https://example.org');
+/* ---------- 场景 3：换一个域名，日志里不该出现多余的站外提示 ---------- */
+console.log('其他站点 · 不编造提示');
+const rule3 = rule.replace('https://demo-vod.example', 'https://example.org');
 const s3 = makeSandbox(rule3, {}, '连接超时（12 秒）');
 s3.sandbox.homeContent({});
 const log3 = (s3.sandbox.__drpy_log__ || []).join('\n');
 check('带超时原因', log3.indexOf('连接超时') >= 0, log3);
-check('没有 ddys 提示', log3.indexOf('ddys.io') < 0, log3);
+check('只写原因，不编造站外提示', log3.indexOf('备用域名') < 0, log3);
 
 /* ---------- 场景 4：页面正常但选择器不命中 ---------- */
 console.log('页面正常 · 选择器不命中');
 const s4 = makeSandbox(rule, {
-  'https://ddys.pro': '<html><body><div class="other">无导航</div></body></html>'
+  'https://demo-vod.example': '<html><body><div class="other">无导航</div></body></html>'
 }, '');
 s4.sandbox.homeContent({});
 const log4 = (s4.sandbox.__drpy_log__ || []).join('\n');

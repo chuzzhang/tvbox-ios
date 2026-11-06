@@ -9,9 +9,9 @@ dex_scan.py —— 从 TVBox 的 spider jar 里抽站点实现用到的字符串
 把每个方法里 const-string 引用的字符串按类归好，按"像不像接口地址"排序输出。
 
 用法：
-    python tools/dex_scan.py pg.jar                  # 全部站点类
-    python tools/dex_scan.py pg.jar --site csp_GM    # 只看某几个
-    python tools/dex_scan.py pg.jar --json out.json  # 机器可读
+    python tools/dex_scan.py spider.jar                  # 全部站点类
+    python tools/dex_scan.py spider.jar --site csp_GM    # 只看某几个
+    python tools/dex_scan.py spider.jar --json out.json  # 机器可读
 
 dex 格式要点（本工具实际用到的）：
     header 0x38 起 string_ids_size/off，type_ids，class_defs
@@ -174,7 +174,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("jar")
     ap.add_argument("--site", action="append", default=[],
-                    help="只看这些类名/关键字（可多次传）：--site csp_GM --site Sukebei")
+                    help="只看这些类名/关键字（可多次传）：--site csp_GM --site Spider")
     ap.add_argument("--json", help="结果写到这个文件")
     ap.add_argument("--min", type=int, default=1, help="每个类至少保留几条有用字符串")
     ap.add_argument("--all", action="store_true",

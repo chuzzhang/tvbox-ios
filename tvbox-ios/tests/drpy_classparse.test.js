@@ -1,4 +1,4 @@
-// class_parse 型 drpy 站点（ddys 那类 WordPress）的验证。
+// class_parse 型 drpy 站点（WordPress 那类）的验证。
 // 语法：父选择器;名称选择器;链接选择器;从链接提 type_id 的正则
 const fs = require('fs');
 const path = require('path');
@@ -56,9 +56,9 @@ function pdfa(html, sel) {
 const homeHTML = `
 <html><body>
 <nav id="primary-menu"><ul>
-  <li class="menu-item"><a href="https://ddys.pro/pro/movie">电影</a></li>
-  <li class="menu-item"><a href="https://ddys.pro/pro/series">剧集</a></li>
-  <li class="menu-item"><a href="https://ddys.pro/pro/anime">动漫</a></li>
+  <li class="menu-item"><a href="https://demo-vod.example/pro/movie">电影</a></li>
+  <li class="menu-item"><a href="https://demo-vod.example/pro/series">剧集</a></li>
+  <li class="menu-item"><a href="https://demo-vod.example/pro/anime">动漫</a></li>
 </ul></nav>
 <div id="post-list">
   <div class="post-item"><a href="/movie/1">影片A</a><img data-src="/img/a.jpg"><span class="cat">2024</span></div>
@@ -97,8 +97,8 @@ function check(name, cond, extra) {
 /* ---------- 场景 1：class_parse 命中 ---------- */
 const rule1 = `
 var rule = {
-    title: 'ddys',
-    host: 'https://ddys.pro',
+    title: 'demo',
+    host: 'https://demo-vod.example',
     url: '/fyclass/page/fypage/',
     searchUrl: '/?s=**&post_type=post',
     class_parse: '#primary-menu li.menu-item;a&&Text;a&&href;.pro/(.*)',
@@ -106,33 +106,33 @@ var rule = {
 };
 `;
 const s1 = makeSandbox(rule1, {
-  'https://ddys.pro': homeHTML,
-  'https://ddys.pro/pro/movie/page/1/': listHTML,
-  'https://ddys.pro/?s=%E7%94%B5%E5%BD%B1&post_type=post': listHTML
+  'https://demo-vod.example': homeHTML,
+  'https://demo-vod.example/movie/page/1/': listHTML,
+  'https://demo-vod.example/?s=%E7%94%B5%E5%BD%B1&post_type=post': listHTML
 });
 
 console.log('class_parse · homeContent');
 const home = s1.sandbox.homeContent({});
 check('抓到 3 个分类', home.class.length === 3, home);
 check('名称取 a&&Text', home.class[0] && home.class[0].type_name === '电影', home.class[0]);
-check('正则把链接裁成 type_id', home.class[0] && home.class[0].type_id === 'pro/movie', home.class[0]);
-check('第二项 id', home.class[1] && home.class[1].type_id === 'pro/series', home.class[1]);
+check('正则把链接裁成 type_id', home.class[0] && home.class[0].type_id === 'movie', home.class[0]);
+check('第二项 id', home.class[1] && home.class[1].type_id === 'series', home.class[1]);
 check('首页只请求一次（有缓存）',
-  s1.hits.filter(u => u === 'https://ddys.pro').length === 1, s1.hits);
+  s1.hits.filter(u => u === 'https://demo-vod.example').length === 1, s1.hits);
 
 console.log('class_parse · categoryContent');
-const cat = s1.sandbox.categoryContent('pro/movie', 1, false, {});
-check('拼出 /pro/movie/page/1/', s1.hits.indexOf('https://ddys.pro/pro/movie/page/1/') >= 0, s1.hits);
+const cat = s1.sandbox.categoryContent('movie', 1, false, {});
+check('拼出 /movie/page/1/', s1.hits.indexOf('https://demo-vod.example/movie/page/1/') >= 0, s1.hits);
 check('2 条列表', cat.list.length === 2, cat);
 check('标题/封面/副标题',
   cat.list[0] && cat.list[0].vod_name === '列表片1'
-  && cat.list[0].vod_pic === 'https://ddys.pro/img/9.jpg'
+  && cat.list[0].vod_pic === 'https://demo-vod.example/img/9.jpg'
   && cat.list[0].vod_remarks === 'HD', cat.list[0]);
 
 console.log('class_parse · 日志');
 const log1 = (s1.sandbox.__drpy_log__ || []).join('\n');
 check('日志记了分类来源', log1.indexOf('分类来源：class_parse') >= 0, log1);
-check('日志记了请求结果', log1.indexOf('GET https://ddys.pro →') >= 0, log1);
+check('日志记了请求结果', log1.indexOf('GET https://demo-vod.example →') >= 0, log1);
 
 /* ---------- 场景 2：class_parse 选择器不匹配，退回导航猜测 ---------- */
 const rule2 = `

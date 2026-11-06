@@ -7,7 +7,7 @@ import Foundation
 /// 用 JSON 解会直接报 `Unexpected character 'C' around line 1, column 2`——
 /// 那个 C 来自 `<![CDATA[`。
 ///
-/// 结构（实测 `www.msnii.com/api/xml.php`）：
+/// 结构（实测 `www.example.com/api/xml.php`）：
 /// ```
 /// <rss version="5.1">
 ///   <list page="1" pagecount="1284" recordcount="25673">

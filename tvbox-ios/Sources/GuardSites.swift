@@ -2,8 +2,8 @@ import Foundation
 
 /// Wex / AI 卫士加固包（`csp_xxxGuard`）的识别与诊断。
 ///
-/// 实测样本：`https://9280.kstore.space/aiwex.json` 的顶层 spider
-/// `http://oss4liview.moji.com/thd_file/2026/11/04/690e7f13e63718e6ea88add0c59d4289.jpg`
+/// 实测样本：`https://example.com/tvbox.json` 的顶层 spider
+/// `http://example.com/spider.jpg`
 /// （md5 86cb2cdcd99e29334004b80e48007e9a，1 008 KB）：
 ///
 ///   classes.dex                 39 KB   143 类 / 373 个方法引用 / 477 条字符串

@@ -52,7 +52,7 @@ def fetch(url, timeout=12, referer=None):
 
 
 def resolve(base, rel):
-    """配置里的 spider / api 常写成 ./pg.jar 这种相对路径，基准是配置文件所在目录。"""
+    """配置里的 spider / api 常写成 ./spider.jar 这种相对路径，基准是配置文件所在目录。"""
     rel = (rel or "").strip()
     if not rel:
         return ""

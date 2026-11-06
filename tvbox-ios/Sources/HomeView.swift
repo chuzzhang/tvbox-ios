@@ -197,7 +197,7 @@ struct FeedView: View {
             roots = top.isEmpty ? cats : top
             rootId = roots.first?.type_id ?? ""
             kids = children(of: rootId)
-            // 「中文传媒 / 国产 / 明星网黄」这类父分类本身不挂片子，只有子分类有内容。
+            // 顶层分类（分组那一级）本身常常不挂片子，只有子分类有内容。
             // 默认直接落到第一个子分类，否则一进站点就是「该分类没有返回内容」。
             current = kids.first?.type_id ?? rootId
             await reload()
