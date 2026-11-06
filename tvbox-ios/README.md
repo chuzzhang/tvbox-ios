@@ -305,7 +305,7 @@ HTTP 401 拒绝访问 — <url>
 | 地址是播放页：`/player/?url=https%3A%2F%2Fcdn%2F1.m3u8` | 取出 `url=` 里的真实地址 |
 | 相对路径：`/v/2024/xxx.m3u8` | 按站点地址补全 |
 | 裸请求 403（防盗链） | 带上 `Referer` + 浏览器 UA；裸请求不行就启用本地代理（`Sources/HLSLocalProxy.swift`） |
-| 返回的是 HTML 不是视频流 | 尝试配置里的 `parses` 解析接口，取回真实地址 |
+| 返回的是 HTML 不是视频流 | 按配置里的 `parses` 逐条试：`type 1` 走 json 接口取真链；`type 0` 把播放页塞进无界面 webview，拦它自己请求的 m3u8（`Sources/ParseWebView.swift`） |
 | 地址本身 404 / 失效 | 直接报「HTTP 404，文件不存在，换线路」 |
 
 iOS 上 `AVURLAssetHTTPHeaderFieldsKey` 是私有键、基本不生效，所以需要头的流走 `skd://` 本地代理：

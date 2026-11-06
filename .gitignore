@@ -1,0 +1,31 @@
+# Xcode
+build/
+DerivedData/
+*.xcarchive
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+xcuserdata/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# xcodegen / cocoapods 生成物
+tvbox-ios/TVBox.xcodeproj/
+tvbox-ios/Pods/
+tvbox-ios/Podfile.lock
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 本地环境
+.workbuddy/
+
+# 导出产物
+dist/
+
+# 工作区备份包，非工程文件
+*.7z

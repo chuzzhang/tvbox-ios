@@ -81,15 +81,31 @@ enum PlayResolver {
         var p = await probe(s, headers: headers)
         notes.append("带 Referer 探测：\(p.describe)")
 
-        // 4) 拿不到就试解析接口（配置里的 parses）
+        // 4) 拿不到就按 parses 逐条试：type 1 走 json 接口，其余走 webview 嗅探
         if !p.ok {
-            if let parsed = await viaParse(s, parses: parses) {
-                notes.append("解析接口给出：\(short(parsed))")
-                let p2 = await probe(parsed, headers: headers)
-                notes.append("解析后探测：\(p2.describe)")
+            let attempts = await viaParses(s, parses: parses)
+            for a in attempts {
+                var head = "解析「\(a.name)」[\(a.kind)]"
+                if let cand = a.url, !cand.isEmpty {
+                    head += "：" + short(cand)
+                } else {
+                    head += "：没取到地址"
+                }
+                notes.append(head)
+                for n in a.notes { notes.append("    · " + n) }
+
+                guard let cand = a.url, !cand.isEmpty else { continue }
+                // 嗅探带回来的头优先：那条流认的是播放页的 Referer
+                var candHeaders = headers
+                for (k, v) in a.headers { candHeaders[k] = v }
+                let p2 = await probe(cand, headers: candHeaders)
+                notes.append("    · 探测：" + p2.describe)
                 if p2.ok {
-                    s = parsed
+                    s = cand
                     p = p2
+                    headers = candHeaders
+                    notes.append("采用「\(a.name)」给出的地址")
+                    break
                 }
             }
         }
@@ -193,25 +209,77 @@ enum PlayResolver {
 
     // MARK: - 解析接口
 
-    /// tvbox 的 parses：把播放页塞给 `.../?url=`，接口回 `{"url":"真实地址"}`
-    static func viaParse(_ playURL: String, parses: [Parse]) async -> String? {
-        guard !parses.isEmpty else { return nil }
-        guard let encoded = playURL.addingPercentEncoding(withAllowedCharacters: .alphanumerics) else { return nil }
+    struct ParseAttempt {
+        var name: String
+        var kind: String
+        var url: String?
+        var notes: [String] = []
+        /// 取这个地址时用的请求头（webview 嗅探出来的是播放页的 Referer）
+        var headers: [String: String] = [:]
+    }
 
-        // 优先 json 类型
-        let ordered = parses.filter { $0.type == 1 } + parses.filter { $0.type != 1 }
-        for p in ordered.prefix(4) {
-            let base = p.url.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !base.isEmpty else { continue }
-            var full = base
-            if !full.contains("url=") {
-                full += (full.contains("?") ? "" : "?") + "url="
+    /// tvbox 的 `parses` 有两种，配置里混着放：
+    /// - `type: 1` —— json 接口，把播放页塞给 `.../?url=`，接口回 `{"url":"真实地址"}`
+    /// - `type: 0/2`（默认）—— 嗅探接口，`url` 本身是播放页，页面里的播放器自己发包，
+    ///   地址只有拦请求才拿得到，走 `ParseWebView`
+    ///
+    /// 顺序照配置走，**不按类型重排**：配置里的顺序就是站点作者排的可靠度顺序。
+    /// 试的次数按 `sniff_rules.json` 的预算卡住，否则一次播放等十几条接口要几分钟。
+    static func viaParses(_ playURL: String, parses: [Parse]) async -> [ParseAttempt] {
+        guard !parses.isEmpty else { return [] }
+        let rules = ParseWebView.rules
+        var jsonLeft = rules.maxJSONAttempts
+        var webLeft = rules.maxWebViewAttempts
+        var out: [ParseAttempt] = []
+
+        for p in parses {
+            let raw = p.url.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !raw.isEmpty else { continue }
+            let name = p.name.isEmpty ? "未命名" : p.name
+
+            if p.type == 1 {
+                guard jsonLeft > 0 else {
+                    out.append(ParseAttempt(name: name, kind: "json", url: nil,
+                                            notes: ["跳过：json 接口已试满 \(rules.maxJSONAttempts) 个"]))
+                    continue
+                }
+                jsonLeft -= 1
+                var a = ParseAttempt(name: name, kind: "json", url: nil)
+                a.url = await jsonParse(playURL, api: raw)
+                if a.url == nil {
+                    a.notes.append("接口没返回可识别的媒体地址（可能要求 Referer、或返回了错误页）")
+                }
+                out.append(a)
+            } else {
+                guard webLeft > 0 else {
+                    out.append(ParseAttempt(name: name, kind: "webview", url: nil,
+                                            notes: ["跳过：webview 嗅探已试满 \(rules.maxWebViewAttempts) 个"]))
+                    continue
+                }
+                webLeft -= 1
+                // 播放页地址可能是相对的，按播放地址所在目录补全
+                let page = normalize(raw, base: URLKit.base(playURL))
+                var a = ParseAttempt(name: name, kind: "webview", url: nil)
+                let r = await ParseWebView.sniff(page)
+                a.url = r.url
+                a.headers = r.headers
+                a.notes.append(contentsOf: r.notes)
+                out.append(a)
             }
-            full += encoded
-            guard let data = try? await Net.shared.fetch(full, timeout: 10, retry: 0) else { continue }
-            if let found = findURL(in: data) { return found }
         }
-        return nil
+        return out
+    }
+
+    /// json 型解析接口：拼 `?url=`，回来在 JSON 里找第一个像媒体地址的字段
+    static func jsonParse(_ playURL: String, api: String) async -> String? {
+        guard let encoded = playURL.addingPercentEncoding(withAllowedCharacters: .alphanumerics) else { return nil }
+        var full = api
+        if !full.contains("url=") {
+            full += (full.contains("?") ? "" : "?") + "url="
+        }
+        full += encoded
+        guard let data = try? await Net.shared.fetch(full, timeout: 10, retry: 0) else { return nil }
+        return findURL(in: data)
     }
 
     /// 在解析接口的 JSON 里找第一个像媒体地址的字段

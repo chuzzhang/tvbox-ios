@@ -69,10 +69,26 @@ enum GuardSites {
             out.append("该 so 用 Obfuscator-LLVM 8.0 混淆：控制流平坦化 + 数据段逐位解密 + 自定义 .mytext 代码段")
             out.append("解开后还要宿主 app 的 libDexNative.so 用 InMemoryDexClassLoader 加载 —— TVBox 主程序自带这个库")
         }
-        out.append("iOS 上没有 libDexNative.so，也没有 ART：这套东西一层都过不去")
-        out.append("要拿到真实接口只有一条路：在 Android 上跑一次，把解出来的 dex dump 出来，再反编译")
-        out.append("dump 脚本见仓库 _work/dump_guard.js，frida -U -f <包名> -l dump_guard.js，结果写到 /sdcard/wex_dump/")
-        out.append("拿到 dex 之后 jadx 打开，WexAiReBoGuard 的 catOpen/categoryContent 里就是域名和接口，改写成 Swift 十分钟")
+        out.append("静态还原过一遍：密钥 = strftime(「%Y%m%d」) 即当天日期（如 20261105），")
+        out.append("解密产物写到 <cache>/sharedb/config.db，再用 DexClassLoader 加载 —— 落地文件就是 dex")
+        out.append("iOS 上没有 libDexNative.so，也没有 ART：这套东西一层都过不去，且解开仍是 dex")
+        out.append("要拿到真实接口只有一条路：在 Android 上跑一次，把解密产物 dump 出来，再反编译")
+        out.append("脚本见 _work/dump_wex_dex.js：hook FileOutputStream.write 直接截 config.db 内容")
+        out.append("  frida -U -f com.fongmi.android.tv -l dump_wex_dex.js --no-pause")
+        out.append("  进 app 打开任意加固站点一次 → 产物在 /sdcard/wex_dump/ → adb pull 回来")
+        out.append("拿到 dex 后 jadx 打开对应 XxxGuard，catOpen/categoryContent 里就是域名和接口")
         return out
+    }
+
+    /// 整份配置的加固占比。给用户一句能直接判断的话，比逐站点开诊断快。
+    static func configStat(_ sites: [Site]) -> String? {
+        let usable = sites.filter { $0.isUsable }
+        guard !usable.isEmpty else { return nil }
+        let guards = usable.filter { isGuard(api: $0.api) }
+        if guards.isEmpty { return nil }
+        if guards.count == usable.count {
+            return "本配置 \(usable.count) 个点播站点全部是加固壳，没有一个能走 CMS 或脚本路径"
+        }
+        return "本配置 \(guards.count)/\(usable.count) 个点播站点是加固壳，其余可正常尝试"
     }
 }

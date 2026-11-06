@@ -1,0 +1,68 @@
+workflows:
+  ios-unsigned:
+    name: TVBox unsigned ipa
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      xcode: latest
+      vars:
+        PROJECT_DIR: tvbox-ios
+
+    scripts:
+      - name: 环境信息
+        script: |
+          xcodebuild -version
+          sw_vers
+
+      - name: 安装 XcodeGen
+        script: |
+          brew install xcodegen
+          xcodegen --version
+
+      - name: 静态校验
+        script: |
+          cd "$PROJECT_DIR"
+          python3 tools/check.py
+
+      - name: 生成工程
+        script: |
+          cd "$PROJECT_DIR"
+          xcodegen generate --spec project.yml
+
+      - name: 解析依赖
+        script: |
+          cd "$PROJECT_DIR"
+          xcodebuild -resolvePackageDependencies \
+            -project TVBox.xcodeproj \
+            -scheme TVBox
+
+      - name: Archive
+        script: |
+          cd "$PROJECT_DIR"
+          xcodebuild archive \
+            -project TVBox.xcodeproj \
+            -scheme TVBox \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/TVBox.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: 打包 ipa
+        script: |
+          cd "$PROJECT_DIR"
+          APP=build/TVBox.xcarchive/Products/Applications/TVBox.app
+          test -d "$APP"
+          mkdir -p build/Payload
+          cp -R "$APP" build/Payload/
+          rm -rf build/Payload/TVBox.app/_CodeSignature
+          cd build
+          zip -qry TVBox.ipa Payload
+          ls -lh TVBox.ipa
+          unzip -l TVBox.ipa | head -20
+
+    artifacts:
+      - tvbox-ios/build/TVBox.ipa
+      - tvbox-ios/build/*.xcarchive

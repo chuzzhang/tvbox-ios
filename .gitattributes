@@ -1,0 +1,13 @@
+# 统一换行符，避免 macOS 上脚本被 CRLF 打断
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ipa binary
+*.xcarchive binary
+
+*.sh text eol=lf
+*.swift text eol=lf
+*.yml text eol=lf
+*.py text eol=lf
+*.js text eol=lf

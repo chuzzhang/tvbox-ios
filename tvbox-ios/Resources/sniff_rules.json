@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "说明": "播放页嗅探的过滤规则。改这里不用重新编译，改完同步更新 tests/parse_webview.test.js。",
+  "mediaExtensions": [
+    "m3u8", "mpd", "mp4", "m4v", "mov", "flv", "ts", "mkv", "webm", "mp3", "m4a", "aac"
+  ],
+  "blockHostKeywords": [
+    "doubleclick.net",
+    "googlesyndication.com",
+    "google-analytics.com",
+    "googletagmanager.com",
+    "hm.baidu.com",
+    "cnzz.com",
+    "umeng.com",
+    "51.la",
+    "gstatic.com",
+    "bdstatic.com",
+    "beacon",
+    "analytics",
+    "/ads/",
+    "/ad/",
+    "adx."
+  ],
+  "blockURLPatterns": [
+    "\\.(css|js|woff2?|ttf|eot|ico)(\\?|#|$)",
+    "\\.(jpe?g|png|gif|webp|svg|bmp)(\\?|#|$)",
+    "^data:",
+    "^about:",
+    "^mailto:"
+  ],
+  "noteURLPatterns": [
+    "^blob:",
+    "^mediasource:"
+  ],
+  "rankBoost": {
+    "m3u8": 30,
+    "mpd": 30,
+    "mp4": 20,
+    "m4v": 20,
+    "flv": 10,
+    "mkv": 10,
+    "webm": 10,
+    "ts": 5,
+    "mov": 20,
+    "mp3": 5,
+    "m4a": 5,
+    "aac": 5
+  },
+  "confirmedBoost": 100,
+  "timeout": 14,
+  "settle": 1.2,
+  "maxWebViewAttempts": 2,
+  "maxJSONAttempts": 4
+}
