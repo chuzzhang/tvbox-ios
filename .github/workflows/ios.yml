@@ -228,10 +228,6 @@ jobs:
             echo ""
             if [ -n "$CHANGES" ]; then echo "$CHANGES"; else echo "- 无新提交"; fi
             echo ""
-            if [ -n "$PREV" ]; then
-              # 用 GitHub 自己的写法，release 页上会渲染成熟悉的那行
-              echo "**Full Changelog**: https://github.com/$GITHUB_REPOSITORY/compare/$PREV...$TAG"
-            fi
           } > /tmp/notes.md
 
           # 同名 tag / release 先清掉，重跑和改同一版号都不会撞

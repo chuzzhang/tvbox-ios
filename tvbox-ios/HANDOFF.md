@@ -1,6 +1,6 @@
 # TVBox iOS 交接文档
 
-版本：build 24（`CURRENT_PROJECT_VERSION: "24"`）  
+版本：build 25（`CURRENT_PROJECT_VERSION: "25"`）  
 最后更新：2026-11-07  
 项目根：`tvbox-ios/`
 
@@ -417,21 +417,22 @@ cd build && zip -qry TVBox.ipa Payload
 
 ### 发版号
 
-改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 24），commit 后 CI 出新包并**自动发 Release**：
+改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 25），commit 后 CI 出新包并**自动发 Release**：
 
 ```
-tag        build24
-标题       TVBox 1.0.24 (build 24)
-资产       TVBox-1.0.24.ipa（未签名）+ TVBox-1.0.24.ipa.sha256
-正文       自签说明 + 包信息 + 本次更新（上个 tag 以来的提交）+ 对比链接
-安装后显示 版本 1.0.24（24）
+tag        build25
+标题       TVBox 1.0.25 (build 25)
+资产       TVBox-1.0.25.ipa（未签名）+ TVBox-1.0.25.ipa.sha256
+正文       自签说明 + 包信息 + 本次更新（上个 tag 以来的提交）
+安装后显示 版本 1.0.25（25）
 ```
 
 正文里的更新列表是自己用 `git log $PREV..HEAD` 生成的，**不要换回 `--generate-notes`** ——
 仓库全是直接 push、没有 PR，GitHub 的自动笔记只会给一行 compare 链接，等于没写。
+**也不要在正文里放 compare 链接**，release 页只要标题、包信息、更新列表。
 checkout 必须 `fetch-depth: 0`，浅克隆里 `git describe --tags` 取不到上一个版本。
 
-`1.0.24` = `MARKETING_VERSION` 去掉末位（1.0）+ `CURRENT_PROJECT_VERSION`（24），由 workflow 的
+`1.0.25` = `MARKETING_VERSION` 去掉末位（1.0）+ `CURRENT_PROJECT_VERSION`（25），由 workflow 的
 「读版本号」步骤算出来，再用 `xcodebuild MARKETING_VERSION=…` 覆盖进包 —— 所以设置里显示的
 版本号跟着每次构建走，不会永远停在 `1.0.0`。改版号不用动 workflow。
 
