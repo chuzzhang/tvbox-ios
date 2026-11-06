@@ -21,6 +21,13 @@ final class PlayerModel: ObservableObject {
     /// 地址解析的诊断，出错时一并显示
     @Published var notes: [String] = []
 
+    /// 进度条要的三件事：在放没有、放到哪、总长多少
+    @Published var isPlaying = false
+    @Published var position: Double = 0
+    @Published var duration: Double = 0
+    /// 直播流（m3u8 没有 ENDLIST）duration 是 indefinite，进度条只能禁用
+    @Published var seekable = false
+
     private(set) var player: AVPlayer?
     private var statusObs: NSKeyValueObservation?
     private var endObs: NSObjectProtocol?
@@ -29,6 +36,7 @@ final class PlayerModel: ObservableObject {
     /// AVAsset 只弱持 delegate，这里必须强引用，否则代理一释放就黑屏
     private var proxy: HLSProxy?
     private var watchdog: Task<Void, Never>?
+    private var ticker: Task<Void, Never>?
 
     #if canImport(MobileVLCKit)
     private(set) var vlc: VLCMediaPlayer?
@@ -85,6 +93,7 @@ final class PlayerModel: ObservableObject {
         let p = AVPlayer(playerItem: item)
         p.automaticallyWaitsToMinimizeStalling = true
         player = p
+        startTicker()
 
         statusObs = item.observe(\.status, options: [.new]) { [weak self] it, _ in
             Task { @MainActor in
@@ -145,6 +154,98 @@ final class PlayerModel: ObservableObject {
         #endif
     }
 
+    // MARK: - 播放控制
+
+    func togglePlay() {
+        switch engine {
+        case .av:
+            guard let p = player else { return }
+            if p.timeControlStatus == .playing {
+                p.pause()
+            } else {
+                // 暂停后长时间不动、或播到结尾，rate 会是 0，play() 前先归零重来
+                if let item = p.currentItem, item.duration.isNumeric,
+                   p.currentTime() >= item.duration {
+                    p.seek(to: .zero)
+                }
+                p.play()
+            }
+            isPlaying = (p.timeControlStatus == .playing)
+        case .vlc:
+            #if canImport(MobileVLCKit)
+            guard let v = vlc else { return }
+            if v.isPlaying { v.pause() } else { v.play() }
+            isPlaying = v.isPlaying
+            #endif
+        }
+    }
+
+    func seek(to seconds: Double) {
+        guard seconds.isFinite else { return }
+        let target = max(0, duration > 0 ? min(seconds, duration) : seconds)
+        switch engine {
+        case .av:
+            guard let p = player else { return }
+            // 容差给 0：HLS 分片边界上不精确 seek 会退回上一个关键帧，表现成"拖了没反应"
+            p.seek(to: CMTime(seconds: target, preferredTimescale: 600),
+                   toleranceBefore: .zero, toleranceAfter: .zero)
+            position = target
+        case .vlc:
+            #if canImport(MobileVLCKit)
+            guard let v = vlc, duration > 0 else { return }
+            v.position = Float(target / duration)
+            position = target
+            #endif
+        }
+    }
+
+    func seekBy(_ delta: Double) {
+        guard seekable else { return }
+        seek(to: position + delta)
+    }
+
+    /// 0.5 秒采样：进度条、播放/暂停图标都靠它驱动。
+    /// 不用 Timer 是因为 Task 跟 model 生命周期绑在一起，teardown 一 cancel 就干净了。
+    private func startTicker() {
+        ticker?.cancel()
+        ticker = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                if Task.isCancelled { return }
+                await MainActor.run { self?.sample() }
+            }
+        }
+    }
+
+    private func sample() {
+        switch engine {
+        case .av:
+            guard let p = player, let item = p.currentItem else { return }
+            isPlaying = (p.timeControlStatus == .playing)
+            let d = item.duration.seconds
+            if d.isFinite && d > 0 {
+                duration = d
+                seekable = true
+            } else {
+                // 直播 m3u8 没有 ENDLIST，duration 是 indefinite
+                duration = 0
+                seekable = false
+            }
+            let t = p.currentTime().seconds
+            position = t.isFinite ? t : 0
+        case .vlc:
+            #if canImport(MobileVLCKit)
+            guard let v = vlc else { return }
+            isPlaying = v.isPlaying
+            let len = Double(v.length?.intValue ?? 0) / 1000.0   // VLCTime 是毫秒
+            let cur = Double(v.time?.intValue ?? 0) / 1000.0
+            duration = len > 1 ? len : 0
+            seekable = duration > 0
+            position = cur.isFinite && cur > 0 ? cur : 0
+            #endif
+        }
+    }
+
     // MARK: - VLCKit
 
     func startVLC() {
@@ -190,6 +291,7 @@ final class PlayerModel: ObservableObject {
         p.delegate = holder
         vlcDelegate = holder
         vlc = p
+        startTicker()
         #endif
     }
 
@@ -205,6 +307,8 @@ final class PlayerModel: ObservableObject {
     private func teardownAV() {
         watchdog?.cancel()
         watchdog = nil
+        ticker?.cancel()
+        ticker = nil
         player?.pause()
         statusObs?.invalidate()
         statusObs = nil
@@ -251,6 +355,11 @@ struct PlayerView: View {
     @StateObject private var model = PlayerModel()
     @State private var showUI = true
 
+    /// 拖动进度条期间先别让采样把滑块位置抢回去
+    @State private var dragging = false
+    @State private var dragValue: Double = 0
+    @State private var hideTask: Task<Void, Never>?
+
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
@@ -267,6 +376,13 @@ struct PlayerView: View {
                 .ignoresSafeArea()
                 #endif
             }
+
+            // 点画面开合控制条。这一层压在视频上面、控制条下面，
+            // 所以点按钮、拖滑块都不会被它吃掉
+            Color.clear
+                .contentShape(Rectangle())
+                .ignoresSafeArea()
+                .onTapGesture { toggleUI() }
 
             if !model.ready && model.error == nil {
                 VStack(spacing: 10) {
@@ -305,7 +421,7 @@ struct PlayerView: View {
             }
 
             if showUI {
-                VStack {
+                VStack(spacing: 0) {
                     HStack(spacing: 12) {
                         Button { dismiss() } label: {
                             Image(systemName: "xmark")
@@ -330,15 +446,120 @@ struct PlayerView: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 8)
+
                     Spacer()
+                    bottomControls
                 }
+                .transition(.opacity)
             }
         }
-        .contentShape(Rectangle())
-        .onTapGesture { withAnimation(.easeInOut(duration: 0.2)) { showUI.toggle() } }
         .statusBar(hidden: true)
-        .onAppear { model.prepare(urlString, siteBase: siteBase, parses: parses) }
-        .onDisappear { model.teardown() }
+        .onAppear {
+            model.prepare(urlString, siteBase: siteBase, parses: parses)
+            // 看片时别锁屏
+            UIApplication.shared.isIdleTimerDisabled = true
+            kickHide()
+        }
+        .onDisappear {
+            model.teardown()
+            hideTask?.cancel()
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
+    }
+
+    // MARK: - 控制条
+
+    private var bottomControls: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 30) {
+                Button { model.seekBy(-10); kickHide() } label: {
+                    Image(systemName: "gobackward.10").font(.system(size: 22, weight: .semibold))
+                }
+                .opacity(model.seekable ? 1 : 0.3)
+                .disabled(!model.seekable)
+
+                Button { model.togglePlay(); kickHide() } label: {
+                    Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 38, weight: .semibold))
+                        .frame(width: 64, height: 64)
+                        .contentShape(Rectangle())
+                }
+
+                Button { model.seekBy(10); kickHide() } label: {
+                    Image(systemName: "goforward.10").font(.system(size: 22, weight: .semibold))
+                }
+                .opacity(model.seekable ? 1 : 0.3)
+                .disabled(!model.seekable)
+            }
+            .foregroundColor(.white)
+
+            HStack(spacing: 10) {
+                Text(Self.clock(model.position))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundColor(.white.opacity(0.85))
+                    .frame(width: 46, alignment: .trailing)
+
+                Slider(value: sliderValue, in: 0...max(model.duration, 0.1)) { editing in
+                    if editing {
+                        dragValue = model.position
+                        dragging = true
+                    } else {
+                        model.seek(to: dragValue)
+                        dragging = false
+                    }
+                    kickHide()
+                }
+                .accentColor(.white)
+                .disabled(!model.seekable)
+
+                Text(model.seekable ? Self.clock(model.duration) : "直播")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundColor(.white.opacity(0.85))
+                    .frame(width: 46, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, 22)
+        .padding(.top, 44)
+        .padding(.bottom, 20)
+        .background(
+            LinearGradient(colors: [.clear, .black.opacity(0.7)],
+                           startPoint: .top, endPoint: .bottom)
+        )
+    }
+
+    private var sliderValue: Binding<Double> {
+        Binding(
+            get: { dragging ? dragValue : model.position },
+            set: { dragValue = $0 }
+        )
+    }
+
+    private static func clock(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "00:00" }
+        let total = Int(seconds.rounded())
+        let h = total / 3600, m = (total % 3600) / 60, s = total % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s)
+                     : String(format: "%02d:%02d", m, s)
+    }
+
+    // MARK: - 控制条显隐
+
+    private func toggleUI() {
+        withAnimation(.easeInOut(duration: 0.2)) { showUI.toggle() }
+        if showUI { kickHide() } else { hideTask?.cancel() }
+    }
+
+    /// 播放中 4 秒后自动收起；暂停时留在屏幕上，不然点一次就没法再点播放
+    private func kickHide() {
+        hideTask?.cancel()
+        guard showUI, model.isPlaying else { return }
+        hideTask = Task {
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            if Task.isCancelled { return }
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.25)) { showUI = false }
+            }
+        }
     }
 }
 

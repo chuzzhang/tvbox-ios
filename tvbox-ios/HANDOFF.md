@@ -1,6 +1,6 @@
 # TVBox iOS 交接文档
 
-版本：build 11（`CURRENT_PROJECT_VERSION: "11"`）  
+版本：build 12（`CURRENT_PROJECT_VERSION: "12"`）  
 最后更新：2026-11-07  
 项目根：`tvbox-ios/`
 
@@ -224,6 +224,13 @@ http URL
 
 `PlayerView` 有 15 秒看门狗：`AVPlayerItem` 一直没进入 `readyToPlay` 就判定失败并给出具体原因，不要让它停在无限转圈。
 
+控制条在 `PlayerView.bottomControls`：播放/暂停、±10 秒、进度条、时间。几个约束：
+
+- 进度由 `PlayerModel.startTicker()` 每 0.5 秒采样（`timeControlStatus` / `currentTime` / `duration`），跟着 model 生命周期走，`teardown` 一起取消。
+- 直播流（m3u8 没有 `ENDLIST`）`duration` 是 `indefinite`，此时 `seekable = false`，进度条禁用、时间处显示「直播」，别硬拖。
+- 拖动期间用 `dragging` 标志挡住采样回写，否则手指按住时滑块会被采样抢回去。
+- 点画面的手势层压在视频上、控制条下（`Color.clear.contentShape(Rectangle())`），所以点按钮、拖滑块不会触发显隐。
+
 ### 4.8 诊断是功能的一部分
 
 这个项目约三分之一代码在做"解释为什么不能用"。原因很直接：TVBox 配置里能用的站点比例本来就不高，用户看到"打不开"和看到"这个站的 api 是纯 dex jar，iOS 无 ART"是完全不同的体验。
@@ -293,7 +300,7 @@ push 到 `main`，且改动命中 `tvbox-ios/**` 或 workflow 本身，自动跑
   → archive（CODE_SIGNING_ALLOWED=NO），日志落 build.log
   → 打包 Payload → TVBox.ipa
   → 上传 artifact: TVBox-unsigned-ipa
-  → 发 Release：tag = build{版本号}，附 TVBox.ipa + sha256
+  → 发 Release：tag = build{版本号}，附 TVBox-{版本}.ipa + sha256
 ```
 
 失败时上传 `TVBox-build-log`（含 `build.log` 和 `.xcresult`，保留 7 天）。
@@ -327,13 +334,16 @@ cd build && zip -qry TVBox.ipa Payload
 
 ### 发版号
 
-改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 11），commit 后 CI 出新包并**自动发 Release**：
+改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 12），commit 后 CI 出新包并**自动发 Release**：
 
 ```
-tag        build11
-标题       TVBox 1.0.0 (build 11)
-资产       TVBox.ipa（未签名）+ TVBox.ipa.sha256
+tag        build12
+标题       TVBox 1.0.0 (build 12)
+资产       TVBox-1.0.12.ipa（未签名）+ TVBox-1.0.12.ipa.sha256
 ```
+
+资产名的 `1.0.12` = `MARKETING_VERSION` 去掉末位（1.0）+ `CURRENT_PROJECT_VERSION`（12）。
+这个名字由 workflow 里「读版本号」步骤算出来，改版号不用动 workflow。
 
 不要改 `MARKETING_VERSION`（保持 `1.0.0`）。Release 步骤是幂等的：同名 tag 会先删再建，所以同一个版本号重跑不会撞，资产也会被覆盖成最新构建。发版需要 `permissions: contents: write`，已经写在 workflow 的 job 上——仓库默认 workflow 权限是 read，去掉这段会 403。
 

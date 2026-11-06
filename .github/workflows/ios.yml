@@ -28,10 +28,13 @@ jobs:
             echo "project.yml 里读不到版本号（MARKETING_VERSION / CURRENT_PROJECT_VERSION）"
             exit 1
           fi
+          BASE=${M%.*}
+          FULL="$BASE.$V"
           echo "marketing=$M" >> "$GITHUB_OUTPUT"
           echo "build=$V" >> "$GITHUB_OUTPUT"
           echo "tag=build$V" >> "$GITHUB_OUTPUT"
-          echo "版本：$M (build $V)  →  Release tag: build$V"
+          echo "full=$FULL" >> "$GITHUB_OUTPUT"
+          echo "版本：$M (build $V)  →  Release tag: build$V，ipa 文件名 TVBox-$FULL.ipa"
 
       - name: 选择 Xcode
         run: |
@@ -175,11 +178,14 @@ jobs:
           TAG: ${{ steps.ver.outputs.tag }}
           VER: ${{ steps.ver.outputs.marketing }}
           BUILD: ${{ steps.ver.outputs.build }}
+          FULL: ${{ steps.ver.outputs.full }}
         run: |
           set -e
           cd tvbox-ios
-          shasum -a 256 build/TVBox.ipa | awk '{print $1"  TVBox.ipa"}' > build/TVBox.ipa.sha256
-          cat build/TVBox.ipa.sha256
+          # 资产名带版本号：TVBox-1.0.12.ipa，别人下下来一眼知道是第几版
+          IPA="TVBox-$FULL.ipa"
+          cp build/TVBox.ipa "build/$IPA"
+          ( cd build && shasum -a 256 "$IPA" > "$IPA.sha256" && cat "$IPA.sha256" )
 
           COMMIT="${GITHUB_SHA::8}"
           {
@@ -192,15 +198,16 @@ jobs:
             echo "| Bundle ID | \`osc.tvbox.jun\` |"
             echo "| 最低系统 | iOS 15.0 |"
             echo "| 构建 | GitHub Actions macos-15 / commit \`$COMMIT\` |"
-            echo "| 校验 | \`shasum -a 256 -c TVBox.ipa.sha256\` |"
+            echo "| 文件 | \`$IPA\` |"
+            echo "| 校验 | \`shasum -a 256 -c $IPA.sha256\` |"
           } > /tmp/notes.md
 
           # 同名 tag / release 先清掉，重跑和改同一版号都不会撞
           gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
 
           gh release create "$TAG" \
-            build/TVBox.ipa \
-            build/TVBox.ipa.sha256 \
+            "build/$IPA" \
+            "build/$IPA.sha256" \
             --title "TVBox $VER (build $BUILD)" \
             --notes-file /tmp/notes.md \
             --generate-notes \
