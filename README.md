@@ -100,7 +100,7 @@ git remote add origin https://github.com/你的用户名/tvbox-ios.git
 git push -u origin main
 ```
 
-push 完 Actions 自动跑 `build-ipa`（`macos-15`），6～9 分钟出结果，Artifacts 下载 `TVBox-unsigned-ipa.zip`，解压即 `TVBox.ipa`。
+push 完 Actions 自动跑 `build-ipa`（`macos-15`），约 5 分钟出结果，同时自动发 Release（tag `build<版本号>`，附 `TVBox.ipa` 与 `sha256`）。Artifacts 里也有 `TVBox-unsigned-ipa.zip`。
 
 连不上 GitHub 的情况、认证、失败日志对照、Codemagic 备用方案，全在 **[CI.md](CI.md)**。
 

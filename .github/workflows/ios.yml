@@ -10,11 +10,28 @@ on:
 
 jobs:
   build:
+    # 建 Release 要写权限；仓库默认是 read（settings → Actions → Workflow permissions）
+    permissions:
+      contents: write
     runs-on: macos-15
     timeout-minutes: 40
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: 读版本号
+        id: ver
+        run: |
+          M=$(grep -m1 'MARKETING_VERSION' tvbox-ios/project.yml | sed -E 's/.*"([^"]+)".*/\1/')
+          V=$(grep -m1 'CURRENT_PROJECT_VERSION' tvbox-ios/project.yml | sed -E 's/.*"([^"]+)".*/\1/')
+          if [ -z "$M" ] || [ -z "$V" ]; then
+            echo "project.yml 里读不到版本号（MARKETING_VERSION / CURRENT_PROJECT_VERSION）"
+            exit 1
+          fi
+          echo "marketing=$M" >> "$GITHUB_OUTPUT"
+          echo "build=$V" >> "$GITHUB_OUTPUT"
+          echo "tag=build$V" >> "$GITHUB_OUTPUT"
+          echo "版本：$M (build $V)  →  Release tag: build$V"
 
       - name: 选择 Xcode
         run: |
@@ -149,3 +166,43 @@ jobs:
           name: TVBox-unsigned-ipa
           path: tvbox-ios/build/TVBox.ipa
           if-no-files-found: error
+
+      - name: 发布到 Release
+        # 只在 main 上推触发时发版；workflow_dispatch 也发，方便补包
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          VER: ${{ steps.ver.outputs.marketing }}
+          BUILD: ${{ steps.ver.outputs.build }}
+        run: |
+          set -e
+          cd tvbox-ios
+          shasum -a 256 build/TVBox.ipa | awk '{print $1"  TVBox.ipa"}' > build/TVBox.ipa.sha256
+          cat build/TVBox.ipa.sha256
+
+          COMMIT="${GITHUB_SHA::8}"
+          {
+            echo "### TVBox $VER (build $BUILD)"
+            echo ""
+            echo "未签名 ipa，装之前要自签：Sideloadly / AltStore（7 天，到期重签），或 TrollStore（免签，看系统支持）。"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| Bundle ID | \`osc.tvbox.jun\` |"
+            echo "| 最低系统 | iOS 15.0 |"
+            echo "| 构建 | GitHub Actions macos-15 / commit \`$COMMIT\` |"
+            echo "| 校验 | \`shasum -a 256 -c TVBox.ipa.sha256\` |"
+          } > /tmp/notes.md
+
+          # 同名 tag / release 先清掉，重跑和改同一版号都不会撞
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+
+          gh release create "$TAG" \
+            build/TVBox.ipa \
+            build/TVBox.ipa.sha256 \
+            --title "TVBox $VER (build $BUILD)" \
+            --notes-file /tmp/notes.md \
+            --generate-notes \
+            --target "$GITHUB_SHA"
+          echo "Release 已发布：$TAG"

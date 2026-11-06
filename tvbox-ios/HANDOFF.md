@@ -1,6 +1,6 @@
 # TVBox iOS 交接文档
 
-版本：build 10（`CURRENT_PROJECT_VERSION: "10"`）  
+版本：build 11（`CURRENT_PROJECT_VERSION: "11"`）  
 最后更新：2026-11-07  
 项目根：`tvbox-ios/`
 
@@ -293,6 +293,7 @@ push 到 `main`，且改动命中 `tvbox-ios/**` 或 workflow 本身，自动跑
   → archive（CODE_SIGNING_ALLOWED=NO），日志落 build.log
   → 打包 Payload → TVBox.ipa
   → 上传 artifact: TVBox-unsigned-ipa
+  → 发 Release：tag = build{版本号}，附 TVBox.ipa + sha256
 ```
 
 失败时上传 `TVBox-build-log`（含 `build.log` 和 `.xcresult`，保留 7 天）。
@@ -326,7 +327,15 @@ cd build && zip -qry TVBox.ipa Payload
 
 ### 发版号
 
-改 `project.yml:19` 的 `CURRENT_PROJECT_VERSION`，commit 后 CI 出新包。不要改 `MARKETING_VERSION`（保持 `1.0.0`）。
+改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 11），commit 后 CI 出新包并**自动发 Release**：
+
+```
+tag        build11
+标题       TVBox 1.0.0 (build 11)
+资产       TVBox.ipa（未签名）+ TVBox.ipa.sha256
+```
+
+不要改 `MARKETING_VERSION`（保持 `1.0.0`）。Release 步骤是幂等的：同名 tag 会先删再建，所以同一个版本号重跑不会撞，资产也会被覆盖成最新构建。发版需要 `permissions: contents: write`，已经写在 workflow 的 job 上——仓库默认 workflow 权限是 read，去掉这段会 403。
 
 ---
 
