@@ -233,19 +233,6 @@ jobs:
             fi
           } > /tmp/notes.md
 
-          # 只保留最近 KEEP 个 build 版本，其余 tag + release 一起删。
-          # 每 build 一个 tag 会无限堆积，release 页也会变成一长串。
-          KEEP=2
-          # 注意：macOS 上的是 BSD sort，没有 -V；按数字排要用 sort -n
-          gh release list --limit 200 --json tagName --jq '.[].tagName' \
-            | grep -E '^build[0-9]+$' \
-            | sed 's/^build//' | sort -n \
-            | awk -v k="$KEEP" '{v[NR]=$1} END{for(i=1;i<=NR-k;i++) printf "build%d\n", v[i]}' \
-            | while read -r old; do
-                echo "清理旧版本：$old"
-                gh release delete "$old" --yes --cleanup-tag 2>/dev/null || true
-              done
-
           # 同名 tag / release 先清掉，重跑和改同一版号都不会撞
           gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
 

@@ -1,6 +1,6 @@
 # TVBox iOS 交接文档
 
-版本：build 21（`CURRENT_PROJECT_VERSION: "21"`）  
+版本：build 22（`CURRENT_PROJECT_VERSION: "22"`）  
 最后更新：2026-11-07  
 项目根：`tvbox-ios/`
 
@@ -417,25 +417,34 @@ cd build && zip -qry TVBox.ipa Payload
 
 ### 发版号
 
-改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 18），commit 后 CI 出新包并**自动发 Release**：
+改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 22），commit 后 CI 出新包并**自动发 Release**：
 
 ```
-tag        build18
-标题       TVBox 1.0.18 (build 18)
-资产       TVBox-1.0.18.ipa（未签名）+ TVBox-1.0.18.ipa.sha256
+tag        build22
+标题       TVBox 1.0.22 (build 22)
+资产       TVBox-1.0.22.ipa（未签名）+ TVBox-1.0.22.ipa.sha256
 正文       自签说明 + 包信息 + 本次更新（上个 tag 以来的提交）+ 对比链接
-安装后显示 版本 1.0.18（18）
+安装后显示 版本 1.0.22（22）
 ```
 
 正文里的更新列表是自己用 `git log $PREV..HEAD` 生成的，**不要换回 `--generate-notes`** ——
 仓库全是直接 push、没有 PR，GitHub 的自动笔记只会给一行 compare 链接，等于没写。
 checkout 必须 `fetch-depth: 0`，浅克隆里 `git describe --tags` 取不到上一个版本。
 
-`1.0.18` = `MARKETING_VERSION` 去掉末位（1.0）+ `CURRENT_PROJECT_VERSION`（18），由 workflow 的
+`1.0.22` = `MARKETING_VERSION` 去掉末位（1.0）+ `CURRENT_PROJECT_VERSION`（22），由 workflow 的
 「读版本号」步骤算出来，再用 `xcodebuild MARKETING_VERSION=…` 覆盖进包 —— 所以设置里显示的
 版本号跟着每次构建走，不会永远停在 `1.0.0`。改版号不用动 workflow。
 
-不要改 `MARKETING_VERSION`（保持 `1.0.0`）。Release 步骤是幂等的：同名 tag 会先删再建，所以同一个版本号重跑不会撞，资产也会被覆盖成最新构建。发版需要 `permissions: contents: write`，已经写在 workflow 的 job 上——仓库默认 workflow 权限是 read，去掉这段会 403。
+**发版不自动删旧版本**：每个 build 一个 tag + 一个 release，历史全留，方便回滚到任意一版。
+要清理手动来：
+
+```bash
+gh release delete build20 --yes --cleanup-tag
+```
+
+不要改 `MARKETING_VERSION`（保持 `1.0.0`）。Release 步骤是幂等的：同名 tag 会先删再建，
+同一个版本号重跑不会撞，资产覆盖成最新构建。发版需要 `permissions: contents: write`，
+已经写在 job 上 —— 仓库默认 workflow 权限是 read，去掉会 403。
 
 ---
 
