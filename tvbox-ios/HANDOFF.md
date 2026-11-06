@@ -77,6 +77,8 @@ tvbox-ios/
 ├── tools/
 │   ├── check.py                   静态校验（CI 第一道关）
 │   ├── pyc38.py                   Python 3.8 pyc 只读解析器（分析用）
+│   ├── check_config.py            配置体检：站点分型 + spider 包识别 + 探活
+│   ├── frida_dump_wex.js          加固壳 dump（hook DexClassLoader / 内存扫 dex）
 │   └── make_icon.py               图标生成
 ├── tests/                         6 个 node 单测，共 126 项
 └── Assets.xcassets/
@@ -461,7 +463,7 @@ for f in tests/*.test.js; do node "$f"; done
 
 按优先级：
 
-1. **加固包（`csp_*Guard`）** — 静态路径走不通。需要一台常开 Android 跑 `_work/dump_wex_dex.js`（frida hook `FileOutputStream.write` + `DexClassLoader.$init`），拿到真 dex 后用 jadx 反编译，把接口改写成 drpy 规则。**一次 dump 能覆盖同一加固壳下的全部站点**，但只对那个壳有效。
+1. **加固包（`csp_*Guard`）** — 静态路径走不通。脚本已进仓库：`tools/frida_dump_wex.js`（hook `DexClassLoader.$init` / `InMemoryDexClassLoader.$init` + 可读区扫 `dex\n035` + `FileOutputStream.write` 兜底）。需要一台 Android 8+ arm64（壳里有 `wexguard_v8.so`，只编了 arm64/arm32），跑起来后拿真 dex → `jadx` 反编译 → 接口改写成 drpy 规则。**一次 dump 覆盖同一壳下全部站点**，但只对那个壳有效。步骤见 `tools/frida_dump_wex.js` 头部注释。
 2. **纯 dex jar** — 只有两条路：反编译重写成 Swift（每个 jar 线性成本），或远程执行（Android 盒子 + HTTP 转发，离线不可用）。
 3. **Python 站点** — 需要 CPython 3.8 静态交叉编译到 arm64-apple-ios，工作量 3–5 周。TVBox 的 python 站点能热更新，做一次之后成本归零，是长期最优但短期最贵。
 4. **直播** — 配置里 `lives` 是明文的，播放器已能播 m3u；EPG 还没接。
