@@ -1,6 +1,6 @@
 # TVBox iOS 交接文档
 
-版本：build 18（`CURRENT_PROJECT_VERSION: "18"`）  
+版本：build 19（`CURRENT_PROJECT_VERSION: "19"`）  
 最后更新：2026-11-07  
 项目根：`tvbox-ios/`
 
@@ -79,6 +79,8 @@ tvbox-ios/
 │   ├── check.py                   静态校验（CI 第一道关）
 │   ├── pyc38.py                   Python 3.8 pyc 只读解析器（分析用）
 │   ├── check_config.py            配置体检：站点分型 + spider 包识别 + 探活
+│   ├── check_tls.py               域名 TLS 体检：ok / sni-blocked / tls-broken / dead
+│   ├── dex_scan.py                从 spider jar 里抽每个类的接口字符串（改写 js 的第一步）
 │   ├── frida_dump_wex.js          加固壳 dump（hook DexClassLoader / 内存扫 dex）
 │   └── make_icon.py               图标生成
 ├── tests/                         6 个 node 单测，共 126 项
@@ -553,6 +555,18 @@ for f in tests/*.test.js; do node "$f"; done
 
 1. **加固包（`csp_*Guard`）** — 静态路径走不通。脚本已进仓库：`tools/frida_dump_wex.js`（hook `DexClassLoader.$init` / `InMemoryDexClassLoader.$init` + 可读区扫 `dex\n035` + `FileOutputStream.write` 兜底）。需要一台 Android 8+ arm64（壳里有 `wexguard_v8.so`，只编了 arm64/arm32），跑起来后拿真 dex → `jadx` 反编译 → 接口改写成 drpy 规则。**一次 dump 覆盖同一壳下全部站点**，但只对那个壳有效。步骤见 `tools/frida_dump_wex.js` 头部注释。
 2. **纯 dex jar** — 只有两条路：反编译重写成 Swift（每个 jar 线性成本），或远程执行（Android 盒子 + HTTP 转发，离线不可用）。
+
+   改写的第一个动作是搞清楚"这个 csp_ 类请求了哪些地址"，`tools/dex_scan.py` 就是干这个的：
+
+   ```bash
+   python tools/dex_scan.py pg.jar --site Jable        # 只看某个站点类
+   python tools/dex_scan.py pg.jar --all --site GM     # 不过滤，原样吐字符串
+   ```
+
+   实测 `clun.top/pg.jar`（4.6 MB / 4467 类）：站点类（`Jable`、`Sukebei`、`Netflav`、`Xojav`）
+   都是几十条字符串的薄壳，真正逻辑在 `com.github.catvod.parser.merge.*` 那一堆单字母混淆类里，
+   域名在运行期拼装（包内 `ShA1sUm.dat` 也有嫌疑）。**对这种包扫字符串出不来接口**，
+   得 jadx 跟调用链，或者真机 frida hook 网络层抓真实请求。
 3. **Python 站点** — 需要 CPython 3.8 静态交叉编译到 arm64-apple-ios，工作量 3–5 周。TVBox 的 python 站点能热更新，做一次之后成本归零，是长期最优但短期最贵。
 4. **直播** — 配置里 `lives` 是明文的，播放器已能播 m3u；EPG 还没接。
 5. **`parses` 解析器** — 已做（build 10）：type 0 走 webview 嗅探，type 1 走 json 接口，见 4.9。还没覆盖的：
