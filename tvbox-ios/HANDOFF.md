@@ -1,6 +1,6 @@
 # TVBox iOS 交接文档
 
-版本：build 28（`CURRENT_PROJECT_VERSION: "28"`）  
+版本：build 29（`CURRENT_PROJECT_VERSION: "29"`）  
 最后更新：2026-11-07  
 项目根：`tvbox-ios/`
 
@@ -82,6 +82,7 @@ tvbox-ios/
 │   ├── check_config.py            配置体检：站点分型 + spider 包识别 + 探活
 │   ├── check_tls.py               域名 TLS 体检：ok / sni-blocked / tls-broken / dead
 │   ├── dex_scan.py                从 spider jar 里抽每个类的接口字符串（改写 js 的第一步）
+│   ├── jsspider_run.js            在 node 里跑一条 js spider，看它返回什么、错在哪
 │   ├── frida_dump_wex.js          wexguard 加固壳的 dex 提取
 │   ├── frida_hook_http.js         抓 jar 站点真实请求（okhttp / URLConnection）
 │   ├── frida_dump_wex.js          加固壳 dump（hook DexClassLoader / 内存扫 dex）
@@ -411,9 +412,33 @@ cheerio 用 `compat.js` 里的最小实现（`$(sel)` / `.find` / `.text` / `.at
 `Resources/cheerio.min.js` 是 ESM 构建（`export{…}` 结尾），进 JSCore 还得再转换一层，
 暂时不用它。
 
+**`filters` 的默认值必须当 extend 传进 category**。这类脚本拼地址是
+`${baseUrl}${tid}/${sort}/${pg}/`，`sort` 来自 `extend.sort`；传空对象时 `sort` 是空串，
+URL 变成 `/theme/64//1/` —— 站点直接 404，表现就是「分类有了、点进去 0 条」。
+`JSSpider.cacheFilters` 在 home() 时把每组筛选的第一个 value 存下来（`{sort: "update"}`），
+`extendFor(tid)` 再拼成对象传进去。
+
 **错误信息也要能查**：`exceptionHandler` 现在取 `message` + `line` + `column` 拼成
 「JS 错误：… [第 N 行 第 M 列]」；`errorText` 会跳过 `[日志]` / `[第 N 段…]` / `[兼容层]`
 这些我们自己打的标记，否则界面上只剩一句没有信息量的标记。
+`[日志]` 尤其容易漏 —— 漏了之后任何一条 console.log 都会被当成「脚本执行报错」。
+
+**详情页兜底**：这类脚本还有一层坑，`detail()` 用正则从 HTML 里抓 `.m3u8`，
+而站点把播放地址改成运行期 JS 拼的 `/api.php/m3u8/ts?path=…`，正则抓不到，
+`vod_play_url` 就是 `正片$`（空地址）。`DetailContent.emptyPlayBlock` 在这种情况下
+给一个「尝试播放」按钮，把 `origin + vod_id` 当播放页丢给 `PlayResolver`，
+后面的 `ParseWebView` 嗅探会拦页面自己发出的 m3u8。
+
+**离线复现**：`tools/jsspider_run.js` 在 node 里跑同一条脚本 ——
+`__reqSync` 用 curl（同步阻塞，等价原生信号量）、选择器用 cheerio、兼容层用仓库里那份
+`Resources/compat.js`：
+
+```bash
+node tools/jsspider_run.js "https://…/xp天堂.js"          # home → 第一个分类 → 首条详情
+node tools/jsspider_run.js ./site.js --search 关键词
+```
+
+xp天堂 的实测：home 174 个分类、category 21 条 / 109 页、detail 出名字但播放地址为空。
 
 ## 5. 持久化
 
@@ -482,14 +507,14 @@ cd build && zip -qry TVBox.ipa Payload
 
 ### 发版号
 
-改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 28），commit 后 CI 出新包并**自动发 Release**：
+改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 29），commit 后 CI 出新包并**自动发 Release**：
 
 ```
-tag        build28
-标题       TVBox 1.0.28 (build 28)
-资产       TVBox-1.0.28.ipa（未签名）+ TVBox-1.0.28.ipa.sha256
+tag        build29
+标题       TVBox 1.0.29 (build 29)
+资产       TVBox-1.0.29.ipa（未签名）+ TVBox-1.0.29.ipa.sha256
 正文       自签说明 + 包信息 + 本次更新（上个 tag 以来的提交）
-安装后显示 版本 1.0.28（28）
+安装后显示 版本 1.0.29（29）
 ```
 
 正文里的更新列表是自己用 `git log $PREV..HEAD` 生成的，**不要换回 `--generate-notes`** ——
@@ -497,7 +522,7 @@ tag        build28
 **也不要在正文里放 compare 链接**，release 页只要标题、包信息、更新列表。
 checkout 必须 `fetch-depth: 0`，浅克隆里 `git describe --tags` 取不到上一个版本。
 
-`1.0.28` = `MARKETING_VERSION` 去掉末位（1.0）+ `CURRENT_PROJECT_VERSION`（28），由 workflow 的
+`1.0.29` = `MARKETING_VERSION` 去掉末位（1.0）+ `CURRENT_PROJECT_VERSION`（29），由 workflow 的
 「读版本号」步骤算出来，再用 `xcodebuild MARKETING_VERSION=…` 覆盖进包 —— 所以设置里显示的
 版本号跟着每次构建走，不会永远停在 `1.0.0`。改版号不用动 workflow。
 

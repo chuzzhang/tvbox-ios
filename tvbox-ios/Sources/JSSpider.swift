@@ -56,13 +56,21 @@ final class JSSpider {
     private let siteKey: String
     private(set) var ruleTitle: String
     private var rule: JSValue? = nil
+    /// home() 里给的筛选器默认值，按分类存：tid -> { sort: "update", … }。
+    /// 新版 js 脚本直接把它拼进 URL（`${baseUrl}${tid}/${sort}/${pg}/`），
+    /// extend 传空对象的话 sort 是空串，URL 变成 `/theme/64//1/` —— 站点回 404，
+    /// 表现就是「分类有、进去 0 条」。TVBox 在 Android 上就是带默认值调的。
+    private var filterDefaults: [String: [String: Any]] = [:]
 
     /// 站点脚本自身的错误。
     /// 公共库告警、以及我们自己插的「第 N 段报错」标记都要滤掉 ——
     /// 否则界面上只剩一句没信息量的标记，真正的原因被挡在后面。
     var errorText: String? {
         box.lines.last {
-            !$0.hasPrefix("[公共库]") && !$0.hasPrefix("[第 ") && !$0.hasPrefix("[兼容层")
+            // 这几种前缀都是我们自己打的：公共库告警、分段标记、兼容层状态、console 输出。
+            // 少滤一个，界面上就会把一条普通日志显示成「脚本执行报错」。
+            !$0.hasPrefix("[公共库]") && !$0.hasPrefix("[第 ")
+                && !$0.hasPrefix("[兼容层") && !$0.hasPrefix("[日志]")
         }
     }
     var allErrors: [String] { box.lines }
@@ -129,6 +137,7 @@ final class JSSpider {
 
         if let fn = ctx.objectForKeyedSubscript("homeContent"), !fn.isUndefined {
             let r = unwrap(fn.call(withArguments: [emptyObj]))
+            if let dict = jsonDict(r) { cacheFilters(dict["filters"]) }
             if let dict = jsonDict(r), let arr = dict["class"] as? [[String: Any]] {
                 out = arr.compactMap { d in
                     guard let tid = str(d["type_id"]), let name = str(d["type_name"]) else { return nil }
@@ -140,6 +149,7 @@ final class JSSpider {
         // 老接口 home() + rule.class_parse
         if out.isEmpty, let fn = ctx.objectForKeyedSubscript("home"), !fn.isUndefined {
             let r = unwrap(fn.call(withArguments: []))
+            if let dict = jsonDict(r) { cacheFilters(dict["filters"]) }
             if let dict = jsonDict(r), let arr = dict["class"] as? [[String: Any]] {
                 out = arr.compactMap { d in
                     guard let tid = str(d["type_id"]), let name = str(d["type_name"]) else { return nil }
@@ -155,7 +165,7 @@ final class JSSpider {
 
     func category(tid: String, page: Int) -> (items: [VItem], pageCount: Int) {
         if let fn = ctx.objectForKeyedSubscript("categoryContent"), !fn.isUndefined {
-            let r = unwrap(fn.call(withArguments: [tid, page, false, emptyObj]))
+            let r = unwrap(fn.call(withArguments: [tid, page, false, extendFor(tid)]))
             if let dict = jsonDict(r) {
                 let items = parseItems(dict["list"])
                 if !items.isEmpty {
@@ -166,7 +176,7 @@ final class JSSpider {
         }
         // 新版接口：category(tid, pg, filter, extend)
         if let fn = ctx.objectForKeyedSubscript("category"), !fn.isUndefined {
-            if let dict = jsonDict(unwrap(fn.call(withArguments: [tid, page, false, emptyObj]))) {
+            if let dict = jsonDict(unwrap(fn.call(withArguments: [tid, page, false, extendFor(tid)]))) {
                 let items = parseItems(dict["list"])
                 if !items.isEmpty {
                     let pc = (dict["pagecount"] as? NSNumber)?.intValue ?? (page + 1)
@@ -441,6 +451,34 @@ final class JSSpider {
         }
         if let o = v.toObject() as? [String: Any] { return o }
         return nil
+    }
+
+    /// 把 home() 给的筛选默认值拼成 extend 对象。没有就用空对象。
+    private func extendFor(_ tid: String) -> JSValue {
+        let obj = emptyObj
+        guard let defaults = filterDefaults[tid], !defaults.isEmpty else { return obj }
+        for (k, v) in defaults {
+            obj.setObject(v, forKeyedSubscript: k as NSString)
+        }
+        return obj
+    }
+
+    /// filters 形如 { tid: [ {key:"sort", name:"排序", value:[{n:"最近更新", v:"update"}, …]}, … ] }
+    /// 取每组第一个 value 当作默认值。
+    private func cacheFilters(_ raw: Any?) {
+        guard let f = raw as? [String: Any], !f.isEmpty else { return }
+        for (tid, v) in f {
+            guard let groups = v as? [[String: Any]] else { continue }
+            var defaults: [String: Any] = [:]
+            for g in groups {
+                guard let key = g["key"] as? String,
+                      let vals = g["value"] as? [[String: Any]],
+                      let first = vals.first,
+                      let val = first["v"] else { continue }
+                defaults[key] = val
+            }
+            if !defaults.isEmpty { filterDefaults[tid] = defaults }
+        }
     }
 
     private var emptyObj: JSValue {

@@ -80,8 +80,7 @@ struct DetailContent: View {
                 }
 
                 if detail.playLines.isEmpty {
-                    Text("该资源没有可用播放地址")
-                        .font(.footnote).foregroundColor(.secondary)
+                    emptyPlayBlock
                 } else {
                     linePicker
                     episodeGrid
@@ -96,6 +95,55 @@ struct DetailContent: View {
                        siteBase: site.apiURL(base: state.configBase),
                        parses: state.config?.parses ?? [])
                 .environmentObject(state)
+        }
+    }
+
+    /// 脚本没抓到直链时的兜底：把详情页当播放页交给 PlayResolver。
+    /// 它探到返回 HTML 会走 ParseWebView 嗅探，拦页面自己发出去的 m3u8 请求。
+    /// 这类站（xp天堂）的播放地址是页面 JS 运行期才取的，脚本里的正则抓不到。
+    private var pageFallbackURL: String? {
+        let id = item.vod_id.trimmingCharacters(in: .whitespaces)
+        guard !id.isEmpty, id != "#" else { return nil }
+        if id.lowercased().hasPrefix("http") { return id }
+        guard id.hasPrefix("/") else { return nil }
+        let origin = URLKit.origin(site.apiURL(base: state.configBase))
+        return origin.isEmpty ? nil : origin + id
+    }
+
+    @ViewBuilder
+    private var emptyPlayBlock: some View {
+        if let u = pageFallbackURL {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("脚本没给出播放直链")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("这个站的播放地址是页面 JS 运行期取的，脚本里的正则抓不到。"
+                     + "改用网页嗅探：把详情页塞进无界面 webview，拦它自己发出的 m3u8 请求。")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    state.markPlayed(item)
+                    playing = Episode(name: "正片（网页嗅探）", url: u)
+                } label: {
+                    Text("尝试播放")
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 9)
+                        .background(Color.accentColor)
+                        .foregroundColor(.white)
+                        .cornerRadius(9)
+                }
+                Text(u)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+            .padding(12)
+            .background(Color(white: 0.12))
+            .cornerRadius(10)
+        } else {
+            Text("该资源没有可用播放地址")
+                .font(.footnote).foregroundColor(.secondary)
         }
     }
 
