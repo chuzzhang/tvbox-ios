@@ -18,6 +18,10 @@ final class AppState: ObservableObject {
     @Published var history: [VItem] = []
     @Published var favorites: [VItem] = []
 
+    /// 配置页那四个开关。默认只开 CMS 和 js，python / jar 现在跑不了，默认关。
+    /// 存 UserDefaults：换配置、重启都不该把用户的勾选重置掉。
+    @Published var enabledKinds: Set<SiteKind> = AppState.loadKinds()
+
     private let ud = UserDefaults.standard
 
     init() {
@@ -34,12 +38,59 @@ final class AppState: ObservableObject {
     var sites: [Site] {
         var seen = Set<String>()
         let list = (config?.sites ?? []).filter { s in
-            guard s.isUsable, !seen.contains(s.id) else { return false }
+            guard s.isUsable, enabledKinds.contains(s.kind), !seen.contains(s.id) else { return false }
             seen.insert(s.id)
             return true
         }
         // CMS 站排前面：脚本站在 iOS 上要看 jar 里有没有 js，能用的概率低
         return list.filter { $0.isCMSRoute } + list.filter { !$0.isCMSRoute }
+    }
+
+    /// 配置里有站点，但被开关全滤掉了 —— 首页要提示去配置页开，而不是说"没有站点"
+    var filteredOutAll: Bool {
+        let all = (config?.sites ?? []).filter { $0.isUsable }
+        return !all.isEmpty && sites.isEmpty
+    }
+
+    /// 某一类在配置里有多少个（不受开关影响，用来显示在开关右边）
+    func count(of kind: SiteKind) -> Int {
+        var seen = Set<String>()
+        return (config?.sites ?? []).reduce(0) { n, s in
+            guard s.isUsable, s.kind == kind, !seen.contains(s.id) else { return n }
+            seen.insert(s.id)
+            return n + 1
+        }
+    }
+
+    /// 配置里可用站点总数，不受开关影响。配置页显示「已导入 x / y」用。
+    var totalSiteCount: Int {
+        var seen = Set<String>()
+        return (config?.sites ?? []).reduce(0) { n, s in
+            guard s.isUsable, !seen.contains(s.id) else { return n }
+            seen.insert(s.id)
+            return n + 1
+        }
+    }
+
+    func setKind(_ kind: SiteKind, on: Bool) {
+        if on { enabledKinds.insert(kind) } else { enabledKinds.remove(kind) }
+        ud.set(enabledKinds.map(\.rawValue).sorted(), forKey: "site.kinds")
+        // 当前选中的站点可能刚被关掉，换一个，不然首页直接空白
+        ensureSelection()
+    }
+
+    /// 当前选中的站点还在可选列表里就保持，否则落到第一个 CMS 站
+    func ensureSelection() {
+        if let k = selectedSiteKey, sites.contains(where: { $0.key == k }) { return }
+        selectedSiteKey = sites.first(where: { $0.isCMSRoute })?.key ?? sites.first?.key
+    }
+
+    private static func loadKinds() -> Set<SiteKind> {
+        // 键不存在（首次启动）用默认；存在但被清空（用户全关掉）要尊重，不能回填
+        guard let raw = UserDefaults.standard.array(forKey: "site.kinds") as? [String] else {
+            return SiteKind.defaultEnabled
+        }
+        return Set(raw.compactMap { SiteKind(rawValue: $0) })
     }
 
     var selectedSite: Site? {
@@ -64,11 +115,10 @@ final class AppState: ObservableObject {
 
             config = cfg
             ud.set(configText, forKey: "cfg.url")
-            if selectedSiteKey == nil {
-                // 优先落到 CMS 站：脚本站在 iOS 上受 jar/规则限制，CMS 站基本都能出内容
-                let all = (cfg.sites ?? []).filter { $0.isUsable }
-                let alive = all.filter { !deadSiteKeys.contains($0.key) }
-                let pool = alive.isEmpty ? all : alive
+            if selectedSiteKey == nil || !sites.contains(where: { $0.key == selectedSiteKey }) {
+                // 只在勾选的类别里挑：优先 CMS，其次第一个没被标死的脚本站
+                let alive = sites.filter { !deadSiteKeys.contains($0.key) }
+                let pool = alive.isEmpty ? sites : alive
                 selectedSiteKey = (pool.first { $0.isCMSRoute } ?? pool.first)?.key
             }
 

@@ -1,6 +1,6 @@
 # TVBox iOS 交接文档
 
-版本：build 25（`CURRENT_PROJECT_VERSION: "25"`）  
+版本：build 26（`CURRENT_PROJECT_VERSION: "26"`）  
 最后更新：2026-11-07  
 项目根：`tvbox-ios/`
 
@@ -350,6 +350,31 @@ api.example.com                 采集接口示例
 运行时也不带任何站点特判：`drpy_lite.js` 里曾经有过"某个站返回空就提示它的备用域名"
 的分支，已经删掉 —— 这类信息会随站点一起过期，而且等于把站名写进了 App。
 
+### 4.14 站点类型四个开关
+
+配置页（`ConfigView.kindSection`）有四个 Toggle，决定哪些站点被导入站点列表：
+
+| 开关 | `SiteKind` | 判定 | 默认 |
+|---|---|---|---|
+| CMS 接口 | `.cms` | `isCMSRoute`（type 0/1，或 type 3 但 api 是 http CMS 直链） | **开** |
+| JS 脚本 | `.js` | api 含 `.js`；ext 是规则文件/内联规则；pyramid 规则 | **开** |
+| Python 脚本 | `.python` | api 后缀 `.py`；pyramid 且 ext 是 py 源码 | 关 |
+| JAR / 内置 | `.jar` | 其余（`csp_*` 等，实现只在 dex 里） | 关 |
+
+几个约定：
+
+- 判定写在 `Site.kind`（`Models.swift`），**顺序必须和 `routeLabel` 一致**：先 CMS，
+  再看 api 后缀（`.py` → `.jar` → `.js`），最后才落到 ext。两处不一致会出现
+  「标签写着 js 脚本、却被 jar 开关滤掉」这种鬼现象。
+- python / jar 现在跑不了，但开关**不禁用**：打开后站点照常列出来，点进去给出缺什么
+  （`ScriptResolver` 的诊断）。藏着比列出来更难排查。
+- 勾选存 `UserDefaults["site.kinds"]`。键不存在（首启）用 `SiteKind.defaultEnabled`；
+  键存在但是空数组（用户全关掉）要**尊重**，不能回填默认值。
+- 关掉一类后当前选中站点可能被滤掉，`setKind` 里调 `ensureSelection()` 自动落到
+  第一个 CMS 站，否则首页直接空白。
+- 全被滤掉时首页提示「当前勾选下没有站点」，不要说成「配置里没有站点」——
+  这两种情况的处理方式完全不同。
+
 ## 5. 持久化
 
 全部 `UserDefaults`，没有 CoreData。
@@ -417,14 +442,14 @@ cd build && zip -qry TVBox.ipa Payload
 
 ### 发版号
 
-改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 25），commit 后 CI 出新包并**自动发 Release**：
+改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 26），commit 后 CI 出新包并**自动发 Release**：
 
 ```
-tag        build25
-标题       TVBox 1.0.25 (build 25)
-资产       TVBox-1.0.25.ipa（未签名）+ TVBox-1.0.25.ipa.sha256
+tag        build26
+标题       TVBox 1.0.26 (build 26)
+资产       TVBox-1.0.26.ipa（未签名）+ TVBox-1.0.26.ipa.sha256
 正文       自签说明 + 包信息 + 本次更新（上个 tag 以来的提交）
-安装后显示 版本 1.0.25（25）
+安装后显示 版本 1.0.26（26）
 ```
 
 正文里的更新列表是自己用 `git log $PREV..HEAD` 生成的，**不要换回 `--generate-notes`** ——
@@ -432,7 +457,7 @@ tag        build25
 **也不要在正文里放 compare 链接**，release 页只要标题、包信息、更新列表。
 checkout 必须 `fetch-depth: 0`，浅克隆里 `git describe --tags` 取不到上一个版本。
 
-`1.0.25` = `MARKETING_VERSION` 去掉末位（1.0）+ `CURRENT_PROJECT_VERSION`（25），由 workflow 的
+`1.0.26` = `MARKETING_VERSION` 去掉末位（1.0）+ `CURRENT_PROJECT_VERSION`（26），由 workflow 的
 「读版本号」步骤算出来，再用 `xcodebuild MARKETING_VERSION=…` 覆盖进包 —— 所以设置里显示的
 版本号跟着每次构建走，不会永远停在 `1.0.0`。改版号不用动 workflow。
 

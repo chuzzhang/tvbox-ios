@@ -22,7 +22,10 @@ struct HomeView: View {
                         UnsupportedView(text: "站点类型 \(site.type) 暂不支持")
                     }
                 } else {
-                    UnsupportedView(text: "配置里没有站点")
+                    // 分清「配置真的没站点」和「被配置页的开关滤掉了」，两种处理完全不同
+                    UnsupportedView(text: state.filteredOutAll
+                                    ? "当前勾选下没有站点\n到配置页把 CMS 或 JS 打开"
+                                    : "配置里没有站点")
                 }
             }
             .background(Color(white: 0.06).ignoresSafeArea())

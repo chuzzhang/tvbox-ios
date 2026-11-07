@@ -242,6 +242,25 @@ struct Site: Codable, Identifiable {
         return "jar 内置"
     }
 
+    /// 站点的实现方式。配置页那四个开关按这个分组，导入时只保留勾选的类别。
+    /// 判定顺序和 routeLabel 保持一致：先 CMS，再看 api 后缀，最后才落到 ext。
+    var kind: SiteKind {
+        if isCMSRoute { return .cms }
+        let a = api.trimmingCharacters(in: .whitespaces).lowercased()
+        // api 直接是脚本文件时 ext 基本是空的，先按 api 判
+        if a.hasSuffix(".py") || a.contains(".py?") { return .python }
+        if a.contains(".jar") { return .jar }
+        if a.contains(".js") { return .js }
+        if isPyramid {
+            return Drpy.extText(ext).lowercased().hasSuffix(".py") ? .python : .js
+        }
+        let e = Drpy.extText(ext).lowercased()
+        if e.contains(".json") || e.contains(".js") { return .js }        // ext 是规则文件地址
+        if Drpy.looksLikeRule(Drpy.extText(ext)) { return .js }           // ext 是内联 JSON 规则
+        if e.contains("import ") && e.contains("def ") { return .python } // ext 是 python 源码
+        return .jar
+    }
+
     /// 有没有可用入口：有 api，或至少给了 ext（脚本站点常把入口放在 ext 里）
     var isUsable: Bool {
         if !api.trimmingCharacters(in: .whitespaces).isEmpty { return true }
@@ -257,6 +276,42 @@ struct Site: Codable, Identifiable {
     func apiURL(base: String?) -> String {
         URLKit.resolve(api, base: base)
     }
+}
+
+/// 站点实现方式。配置页的四个开关就是这四类，默认只开 CMS 和 js。
+enum SiteKind: String, CaseIterable, Identifiable, Hashable {
+    case cms
+    case js
+    case python
+    case jar
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .cms:    return "CMS 接口"
+        case .js:     return "JS 脚本"
+        case .python: return "Python 脚本"
+        case .jar:    return "JAR / 内置"
+        }
+    }
+
+    /// 标注在开关右边的短说明
+    var short: String {
+        switch self {
+        case .cms:    return "type 0/1，maccms 接口"
+        case .js:     return "drpy 规则、js spider"
+        case .python: return "需要 CPython，暂不支持"
+        case .jar:    return "dex 字节码，暂不支持"
+        }
+    }
+
+    /// 当前版本能不能真跑起来。不能跑的不隐藏开关，但要标出来，
+    /// 否则用户开了之后只看到一堆点进去就报错的站点
+    var supported: Bool { self == .cms || self == .js }
+
+    /// 首次启动的默认勾选：只开能用的两类
+    static var defaultEnabled: Set<SiteKind> { [.cms, .js] }
 }
 
 struct Live: Codable, Identifiable {
