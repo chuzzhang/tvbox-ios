@@ -659,6 +659,15 @@ final class JSSpider {
         return box2.text
     }
 
+    /// 判断响应是不是网页。用来挑「站点源」：只有返回 HTML 的域名才可能是内容站。
+    static func looksLikeHTML(_ text: String) -> Bool {
+        let head = text.prefix(600).lowercased()
+        if head.isEmpty { return false }
+        if head.hasPrefix("#extm3u") || head.hasPrefix("{") || head.hasPrefix("[") { return false }
+        return head.contains("<!doctype html") || head.contains("<html")
+            || head.contains("<head") || head.contains("<body") || head.contains("<div")
+    }
+
     /// AES-CBC 解密，输入输出都是 base64。
     /// 先按 NoPadding 解，再手动去掉 PKCS7 尾巴 —— 站点有的标 "No" 有的真带 padding，
     /// 统一这么处理两边都不会错。
@@ -780,12 +789,17 @@ final class JSSpider {
         // req(url, {method, headers, body, buffer})
         let hosts = self.hostBox
         let reqSync: @convention(block) (String, String, String, String, Int) -> String = { url, hjson, method, body, b64 in
-            if let u = URL(string: url), let h = u.host, !h.isEmpty {
+            let text = JSSpider.syncRequest(url, hjson, method, body, b64 != 0)
+            // 只把「返回 HTML 的那个域名」当成站点源。
+            // 不能记最后一次请求：脚本取完详情页后会去拉封面图（image.xxx.cn），
+            // 记最后一次就会把图片 CDN 当成内容站，拼出来的播放页地址是 404。
+            if b64 == 0, JSSpider.looksLikeHTML(text),
+               let u = URL(string: url), let h = u.host, !h.isEmpty {
                 var origin = (u.scheme ?? "https") + "://" + h
                 if let port = u.port { origin += ":\(port)" }
                 hosts.origin = origin
             }
-            return JSSpider.syncRequest(url, hjson, method, body, b64 != 0)
+            return text
         }
         ctx.setObject(unsafeBitCast(reqSync, to: AnyObject.self), forKeyedSubscript: "__reqSync" as NSString)
 

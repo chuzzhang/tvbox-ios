@@ -1,6 +1,6 @@
 # TVBox iOS 交接文档
 
-版本：build 30（`CURRENT_PROJECT_VERSION: "30"`）  
+版本：build 31（`CURRENT_PROJECT_VERSION: "31"`）  
 最后更新：2026-11-07  
 项目根：`tvbox-ios/`
 
@@ -428,9 +428,16 @@ URL 变成 `/theme/64//1/` —— 站点直接 404，表现就是「分类有了
 `catch` 吞掉，封面全是空。现在桥了 `__aesDec` → CommonCrypto：按 NoPadding 解、
 再手动去 PKCS7 尾巴（站点有的标 "No" 有的真带 padding，统一这么处理都对）。
 
-**域名要用脚本请求过的那个**：`hostBox` 在 `__reqSync` 里记 `scheme://host[:port]`，
-`absoluteURL(vod_id)` 用它拼绝对地址。**不能拿配置里 api 的域名** —— xp天堂 的 api 在
-`clun.top`，内容在另一台机器上，拼错就是 404。
+**域名要用「返回 HTML 的那个」**：`hostBox` 只记响应是 HTML 的请求，
+`absoluteURL(vod_id)` 用它拼绝对地址。两级别搞错：
+
+- 不能拿配置里 api 的域名：xp天堂 的 api 在 `clun.top`，内容在 `dzsx5k…cloudfront.net`
+- 也不能记「最后一次请求」：脚本取完详情页会紧接着拉封面图（`image.cpckgr.cn`），
+  记最后一次就把图片 CDN 当内容站了，拼出来是 `https://image.cpckgr.cn/videos/chnwa-2817/`
+  —— 那是张图，播不了（build 30 的现场就是这个）
+
+`JSSpider.looksLikeHTML` 判首 600 字符里有没有 `<html>/<body>/<div`，
+base64 请求（buffer:2）和 `#EXTM3U`、JSON 响应都直接排除。
 
 **详情页兜底**：这类脚本还有一层坑，`detail()` 用正则从 HTML 里抓 `.m3u8`，
 而站点把播放地址改成运行期 JS 拼的 `/api.php/m3u8/ts?path=…`，正则抓不到，
@@ -516,14 +523,14 @@ cd build && zip -qry TVBox.ipa Payload
 
 ### 发版号
 
-改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 30），commit 后 CI 出新包并**自动发 Release**：
+改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 31），commit 后 CI 出新包并**自动发 Release**：
 
 ```
-tag        build30
-标题       TVBox 1.0.30 (build 30)
-资产       TVBox-1.0.30.ipa（未签名）+ TVBox-1.0.30.ipa.sha256
+tag        build31
+标题       TVBox 1.0.31 (build 31)
+资产       TVBox-1.0.31.ipa（未签名）+ TVBox-1.0.31.ipa.sha256
 正文       自签说明 + 包信息 + 本次更新（上个 tag 以来的提交）
-安装后显示 版本 1.0.30（30）
+安装后显示 版本 1.0.31（31）
 ```
 
 正文里的更新列表是自己用 `git log $PREV..HEAD` 生成的，**不要换回 `--generate-notes`** ——
@@ -531,7 +538,7 @@ tag        build30
 **也不要在正文里放 compare 链接**，release 页只要标题、包信息、更新列表。
 checkout 必须 `fetch-depth: 0`，浅克隆里 `git describe --tags` 取不到上一个版本。
 
-`1.0.30` = `MARKETING_VERSION` 去掉末位（1.0）+ `CURRENT_PROJECT_VERSION`（30），由 workflow 的
+`1.0.31` = `MARKETING_VERSION` 去掉末位（1.0）+ `CURRENT_PROJECT_VERSION`（31），由 workflow 的
 「读版本号」步骤算出来，再用 `xcodebuild MARKETING_VERSION=…` 覆盖进包 —— 所以设置里显示的
 版本号跟着每次构建走，不会永远停在 `1.0.0`。改版号不用动 workflow。
 
