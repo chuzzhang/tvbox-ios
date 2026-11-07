@@ -95,6 +95,22 @@
         };
     };
 
+    // ---------- aesX ----------
+    // catvod 的 aesX(mode, encrypt, input, inBase64, key, iv, outBase64)。
+    // 只实现解密：这类脚本拿它解被加密的封面图（AES/CBC，base64 进出）。
+    globalThis.aesX = function (mode, encrypt, input, inBase64, key, iv, outBase64) {
+        try {
+            if (encrypt) { return ''; }
+            if (typeof __aesDec !== 'function') { return ''; }
+            return __aesDec(String(input == null ? '' : input),
+                            String(key == null ? '' : key),
+                            String(iv == null ? '' : iv),
+                            String(mode == null ? '' : mode)) || '';
+        } catch (e) {
+            return '';
+        }
+    };
+
     // ---------- cheerio ----------
     // 原生只认 CSS 选择器（SwiftSoup）。节点用 {h: outerHTML} 表示，
     // 需要取子节点时把 outerHTML 再丢回原生选一次 —— 解析开销在小页面上可忽略。

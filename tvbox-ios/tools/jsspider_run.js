@@ -87,6 +87,26 @@ globalThis.__attr = function (html, name) {
   try { const f = fragmentRoot(html); return f.el.length ? (f.el.attr(name) || '') : ''; } catch (e) { return ''; }
 };
 
+// 原生侧是 CommonCrypto，这里用 node crypto 等价实现（NoPadding 解 + 手动去 PKCS7）
+const crypto = require('crypto');
+globalThis.__aesDec = function (b64, key, iv, mode) {
+  try {
+    const data = Buffer.from(String(b64 || ''), 'base64');
+    if (!data.length) return '';
+    const k = Buffer.from(String(key || ''), 'utf8');
+    let ivb = Buffer.from(String(iv || ''), 'utf8');
+    if (!ivb.length) ivb = Buffer.alloc(16);
+    if (![16, 24, 32].includes(k.length) || ivb.length !== 16) return '';
+    if (data.length % 16 !== 0) return '';
+    const dc = crypto.createDecipheriv('aes-' + (k.length * 8) + '-cbc', k, ivb);
+    dc.setAutoPadding(false);
+    let out = Buffer.concat([dc.update(data), dc.final()]);
+    const n = out[out.length - 1];
+    if (n > 0 && n <= 16 && out.length >= n && out.slice(-n).every(b => b === n)) out = out.slice(0, -n);
+    return out.toString('base64');
+  } catch (e) { return ''; }
+};
+
 /* ---------- 兼容层 ---------- */
 const compat = fs.readFileSync(path.join(__dirname, '../Resources/compat.js'), 'utf8');
 eval(compat);
@@ -174,7 +194,12 @@ function asObj(v) {
       const list = (r && r.list) || [];
       say('\n== category(' + wantCat + ') ==');
       say('条目 ' + list.length + '，页数 ' + (r && r.pagecount));
-      if (list[0]) say('首条：' + JSON.stringify(list[0]).slice(0, 220));
+      if (list[0]) {
+        const it = list[0];
+        const pic = String(it.vod_pic || '');
+        say('首条：' + JSON.stringify({ vod_id: it.vod_id, vod_name: it.vod_name }).slice(0, 160));
+        say('封面：' + (pic ? (pic.slice(0, 40) + '…  共 ' + pic.length + ' 字符') : '（空）'));
+      }
       globalThis.__firstVid = list[0] && list[0].vod_id;
     } catch (e) {
       say('\n== category 抛错 ==\n' + (e && e.stack ? e.stack.split('\n').slice(0, 6).join('\n') : e));

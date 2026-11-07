@@ -1,6 +1,7 @@
 import Foundation
 import JavaScriptCore
 import SwiftSoup
+import CommonCrypto
 
 /// 原生 HTTP 的结果备注，按地址存。
 ///
@@ -61,6 +62,22 @@ final class JSSpider {
     /// extend 传空对象的话 sort 是空串，URL 变成 `/theme/64//1/` —— 站点回 404，
     /// 表现就是「分类有、进去 0 条」。TVBox 在 Android 上就是带默认值调的。
     private var filterDefaults: [String: [String: Any]] = [:]
+
+    /// req() 实际打过的站点源（scheme://host[:port]）。
+    /// 不能拿配置里 api 的域名：js 站点的 api 在配置服务器上，内容在另一个域名
+    /// （xp天堂 的 api 在 clun.top，内容在 dzsx5k…cloudfront.net），拼错就是 404。
+    private final class HostBox { var origin = "" }
+    private let hostBox = HostBox()
+
+    var lastOrigin: String { hostBox.origin }
+
+    /// 把脚本返回的相对路径（`/videos/xxx/`）拼成绝对地址
+    func absoluteURL(_ path: String) -> String? {
+        let p = path.trimmingCharacters(in: .whitespaces)
+        if p.lowercased().hasPrefix("http") { return p }
+        guard p.hasPrefix("/"), !hostBox.origin.isEmpty else { return nil }
+        return hostBox.origin + p
+    }
 
     /// 站点脚本自身的错误。
     /// 公共库告警、以及我们自己插的「第 N 段报错」标记都要滤掉 ——
@@ -642,6 +659,40 @@ final class JSSpider {
         return box2.text
     }
 
+    /// AES-CBC 解密，输入输出都是 base64。
+    /// 先按 NoPadding 解，再手动去掉 PKCS7 尾巴 —— 站点有的标 "No" 有的真带 padding，
+    /// 统一这么处理两边都不会错。
+    static func aesDecryptBase64(_ b64: String, key: String, iv: String, mode: String) -> String {
+        let clean = b64.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let data = Data(base64Encoded: clean, options: [.ignoreUnknownCharacters]),
+              !data.isEmpty else { return "" }
+        let k = Array(key.utf8)
+        var ivBytes = Array(iv.utf8)
+        if ivBytes.isEmpty { ivBytes = Array(repeating: 0, count: 16) }
+        guard k.count == 16 || k.count == 24 || k.count == 32, ivBytes.count == 16 else { return "" }
+        if data.count % kCCBlockSizeAES128 != 0 { return "" }
+
+        var out = Data(count: data.count + kCCBlockSizeAES128)
+        var moved = 0
+        let st = out.withUnsafeMutableBytes { ob -> Int32 in
+            data.withUnsafeBytes { db -> Int32 in
+                CCCrypt(CCOperation(kCCDecrypt), CCAlgorithm(kCCAlgorithmAES), 0,
+                        k, k.count, ivBytes,
+                        db.baseAddress, data.count,
+                        ob.baseAddress, ob.count, &moved)
+            }
+        }
+        guard st == kCCSuccess, moved > 0 else { return "" }
+        var plain = out.prefix(moved)
+        // 去掉 PKCS7 尾巴：末字节 n，且末尾 n 个字节都等于 n
+        if let last = plain.last, last > 0, last <= 16, plain.count >= Int(last) {
+            let n = Int(last)
+            let tail = plain.suffix(n)
+            if tail.allSatisfy({ $0 == last }) { plain = plain.dropLast(n) }
+        }
+        return Data(plain).base64EncodedString()
+    }
+
     // MARK: - HTML 片段（cheerio shim 的原语）
 
     static func fragmentRoot(_ html: String) -> Element? {
@@ -727,8 +778,14 @@ final class JSSpider {
         ctx.setObject(unsafeBitCast(logLine, to: AnyObject.self), forKeyedSubscript: "__log" as NSString)
 
         // req(url, {method, headers, body, buffer})
+        let hosts = self.hostBox
         let reqSync: @convention(block) (String, String, String, String, Int) -> String = { url, hjson, method, body, b64 in
-            JSSpider.syncRequest(url, hjson, method, body, b64 != 0)
+            if let u = URL(string: url), let h = u.host, !h.isEmpty {
+                var origin = (u.scheme ?? "https") + "://" + h
+                if let port = u.port { origin += ":\(port)" }
+                hosts.origin = origin
+            }
+            return JSSpider.syncRequest(url, hjson, method, body, b64 != 0)
         }
         ctx.setObject(unsafeBitCast(reqSync, to: AnyObject.self), forKeyedSubscript: "__reqSync" as NSString)
 
@@ -748,6 +805,13 @@ final class JSSpider {
 
         let fragAttr: @convention(block) (String, String) -> String = { html, n in JSSpider.fragmentAttr(html, n) }
         ctx.setObject(unsafeBitCast(fragAttr, to: AnyObject.self), forKeyedSubscript: "__attr" as NSString)
+
+        // aesX(...) 的解密半：这类脚本拿它解封面图（站点把图片 AES 加密了），
+        // JSCore 没有 crypto，交给 CommonCrypto。
+        let aesDec: @convention(block) (String, String, String, String) -> String = { b64, key, iv, mode in
+            JSSpider.aesDecryptBase64(b64, key: key, iv: iv, mode: mode)
+        }
+        ctx.setObject(unsafeBitCast(aesDec, to: AnyObject.self), forKeyedSubscript: "__aesDec" as NSString)
     }
 
     /// 同步 HTTP，供 JS 直接拿字符串。

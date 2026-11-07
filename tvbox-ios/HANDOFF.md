@@ -1,6 +1,6 @@
 # TVBox iOS 交接文档
 
-版本：build 29（`CURRENT_PROJECT_VERSION: "29"`）  
+版本：build 30（`CURRENT_PROJECT_VERSION: "30"`）  
 最后更新：2026-11-07  
 项目根：`tvbox-ios/`
 
@@ -423,6 +423,15 @@ URL 变成 `/theme/64//1/` —— 站点直接 404，表现就是「分类有了
 这些我们自己打的标记，否则界面上只剩一句没有信息量的标记。
 `[日志]` 尤其容易漏 —— 漏了之后任何一条 console.log 都会被当成「脚本执行报错」。
 
+**封面图要 `aesX`**：站点把封面 AES 加密了，脚本里 `aesX("AES/CBC/No", false, b64, true, key, iv, true)`
+解密成 data URL。JSCore 没有 crypto，`aesX` 也没在 cat.js 里定义 —— 结果是抛错被
+`catch` 吞掉，封面全是空。现在桥了 `__aesDec` → CommonCrypto：按 NoPadding 解、
+再手动去 PKCS7 尾巴（站点有的标 "No" 有的真带 padding，统一这么处理都对）。
+
+**域名要用脚本请求过的那个**：`hostBox` 在 `__reqSync` 里记 `scheme://host[:port]`，
+`absoluteURL(vod_id)` 用它拼绝对地址。**不能拿配置里 api 的域名** —— xp天堂 的 api 在
+`clun.top`，内容在另一台机器上，拼错就是 404。
+
 **详情页兜底**：这类脚本还有一层坑，`detail()` 用正则从 HTML 里抓 `.m3u8`，
 而站点把播放地址改成运行期 JS 拼的 `/api.php/m3u8/ts?path=…`，正则抓不到，
 `vod_play_url` 就是 `正片$`（空地址）。`DetailContent.emptyPlayBlock` 在这种情况下
@@ -507,14 +516,14 @@ cd build && zip -qry TVBox.ipa Payload
 
 ### 发版号
 
-改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 29），commit 后 CI 出新包并**自动发 Release**：
+改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 30），commit 后 CI 出新包并**自动发 Release**：
 
 ```
-tag        build29
-标题       TVBox 1.0.29 (build 29)
-资产       TVBox-1.0.29.ipa（未签名）+ TVBox-1.0.29.ipa.sha256
+tag        build30
+标题       TVBox 1.0.30 (build 30)
+资产       TVBox-1.0.30.ipa（未签名）+ TVBox-1.0.30.ipa.sha256
 正文       自签说明 + 包信息 + 本次更新（上个 tag 以来的提交）
-安装后显示 版本 1.0.29（29）
+安装后显示 版本 1.0.30（30）
 ```
 
 正文里的更新列表是自己用 `git log $PREV..HEAD` 生成的，**不要换回 `--generate-notes`** ——
@@ -522,7 +531,7 @@ tag        build29
 **也不要在正文里放 compare 链接**，release 页只要标题、包信息、更新列表。
 checkout 必须 `fetch-depth: 0`，浅克隆里 `git describe --tags` 取不到上一个版本。
 
-`1.0.29` = `MARKETING_VERSION` 去掉末位（1.0）+ `CURRENT_PROJECT_VERSION`（29），由 workflow 的
+`1.0.30` = `MARKETING_VERSION` 去掉末位（1.0）+ `CURRENT_PROJECT_VERSION`（30），由 workflow 的
 「读版本号」步骤算出来，再用 `xcodebuild MARKETING_VERSION=…` 覆盖进包 —— 所以设置里显示的
 版本号跟着每次构建走，不会永远停在 `1.0.0`。改版号不用动 workflow。
 

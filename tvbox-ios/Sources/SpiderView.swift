@@ -181,8 +181,17 @@ struct SpiderWebView: View {
     private func openDetail(_ item: VItem) async {
         guard let spider else { return }
         let id = item.vod_id
-        let d = await JSSpider.run { spider.detail(id: id) }
-        if let d { playing = d }
+        if var d = await JSSpider.run({ spider.detail(id: id) }) {
+            // 脚本没给播放直链（站点把地址放在页面 JS 里，正则抓不到），
+            // 但 vod_id 是页面路径：补一条「网页嗅探」线路，
+            // 交给 PlayResolver 用 webview 拦页面自己发出的 m3u8。
+            // 域名要用脚本实际请求过的那个 —— 配置里 api 的域名和内容域名常常不是一台。
+            if d.playLines.isEmpty, let page = spider.absoluteURL(d.vod_id) {
+                d.vod_play_from = "网页嗅探"
+                d.vod_play_url = "正片$" + page
+            }
+            playing = d
+        }
     }
 }
 
