@@ -178,6 +178,40 @@
     MO.observe(document.documentElement || document, { childList: true, subtree: true });
   } catch (e) {}
 
+  // ---- 7) 有的播放器非要「点一下」才去取流：静音 play() + 点一下常见播放按钮。
+  //         不点的话页面一直停在封面，嗅探只能超时。
+  function nudge() {
+    try {
+      var vs = document.querySelectorAll('video');
+      for (var i = 0; i < vs.length; i++) {
+        try { vs[i].muted = true; } catch (e) {}
+        try {
+          var p = vs[i].play();
+          if (p && typeof p.catch === 'function') { p.catch(function () {}); }
+        } catch (e) {}
+      }
+      var sels = ['.vjs-big-play-button', '.dplayer-play-icon', '.play-btn',
+                  '.player-play', '[class*="big-play"]', '[class*="play-button"]'];
+      for (var k = 0; k < sels.length; k++) {
+        var el = document.querySelector(sels[k]);
+        if (el && typeof el.click === 'function') {
+          try { el.click(); } catch (e) {}
+          break;
+        }
+      }
+    } catch (e) {}
+  }
+
+  // 播放器初始化时间不固定，分几次轻推；测试环境没有 setTimeout 就直接来一次
+  if (typeof setTimeout === 'function') {
+    var delays = [600, 1800, 4000];
+    for (var d = 0; d < delays.length; d++) {
+      try { setTimeout(nudge, delays[d]); } catch (e) {}
+    }
+  } else {
+    nudge();
+  }
+
   // ---- 6) window.open：解析页有时另开窗口加载播放页
   try {
     var WO = window.open;

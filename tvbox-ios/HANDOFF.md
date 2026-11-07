@@ -1,6 +1,6 @@
 # TVBox iOS 交接文档
 
-版本：build 31（`CURRENT_PROJECT_VERSION: "31"`）  
+版本：build 32（`CURRENT_PROJECT_VERSION: "32"`）  
 最后更新：2026-11-07  
 项目根：`tvbox-ios/`
 
@@ -439,6 +439,17 @@ URL 变成 `/theme/64//1/` —— 站点直接 404，表现就是「分类有了
 `JSSpider.looksLikeHTML` 判首 600 字符里有没有 `<html>/<body>/<div`，
 base64 请求（buffer:2）和 `#EXTM3U`、JSON 响应都直接排除。
 
+**探测到网页就直接嗅探**：`PlayResolver` 第 3.8 步 —— 探一次回来 `head` 以 `<` 开头，
+说明这个地址本身就是播放页，立刻 `ParseWebView.sniff`，别再指望配置里的 `parses`。
+xp天堂 的现场就是：`parses` 四个全是 `type: 1`（json 接口），对播放页毫无办法，
+日志里只有「解析「souav.j [json]」：没取到地址」然后就结束了。嗅探带回来的地址
+用播放页当 Referer 去探，通过就采用。
+
+**嗅探里要主动起播**：`parse_sniff.js` 第 7 段，`document.querySelectorAll('video')`
+逐个静音 `play()`，再点一下 `.vjs-big-play-button` / `[class*="play-button"]` 这类按钮，
+分 600ms / 1800ms / 4000ms 三次轻推。有些播放器不点就不去取流，页面停在封面，
+嗅探只能等到超时。
+
 **详情页兜底**：这类脚本还有一层坑，`detail()` 用正则从 HTML 里抓 `.m3u8`，
 而站点把播放地址改成运行期 JS 拼的 `/api.php/m3u8/ts?path=…`，正则抓不到，
 `vod_play_url` 就是 `正片$`（空地址）。`DetailContent.emptyPlayBlock` 在这种情况下
@@ -523,14 +534,14 @@ cd build && zip -qry TVBox.ipa Payload
 
 ### 发版号
 
-改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 31），commit 后 CI 出新包并**自动发 Release**：
+改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 32），commit 后 CI 出新包并**自动发 Release**：
 
 ```
-tag        build31
-标题       TVBox 1.0.31 (build 31)
-资产       TVBox-1.0.31.ipa（未签名）+ TVBox-1.0.31.ipa.sha256
+tag        build32
+标题       TVBox 1.0.32 (build 32)
+资产       TVBox-1.0.32.ipa（未签名）+ TVBox-1.0.32.ipa.sha256
 正文       自签说明 + 包信息 + 本次更新（上个 tag 以来的提交）
-安装后显示 版本 1.0.31（31）
+安装后显示 版本 1.0.32（32）
 ```
 
 正文里的更新列表是自己用 `git log $PREV..HEAD` 生成的，**不要换回 `--generate-notes`** ——
@@ -538,7 +549,7 @@ tag        build31
 **也不要在正文里放 compare 链接**，release 页只要标题、包信息、更新列表。
 checkout 必须 `fetch-depth: 0`，浅克隆里 `git describe --tags` 取不到上一个版本。
 
-`1.0.31` = `MARKETING_VERSION` 去掉末位（1.0）+ `CURRENT_PROJECT_VERSION`（31），由 workflow 的
+`1.0.32` = `MARKETING_VERSION` 去掉末位（1.0）+ `CURRENT_PROJECT_VERSION`（32），由 workflow 的
 「读版本号」步骤算出来，再用 `xcodebuild MARKETING_VERSION=…` 覆盖进包 —— 所以设置里显示的
 版本号跟着每次构建走，不会永远停在 `1.0.0`。改版号不用动 workflow。
 

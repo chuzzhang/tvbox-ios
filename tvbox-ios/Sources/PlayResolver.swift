@@ -96,7 +96,31 @@ enum PlayResolver {
             }
         }
 
-        // 4) 拿不到就按 parses 逐条试：type 1 走 json 接口，其余走 webview 嗅探
+        // 3.8) 探测回来是网页：这个地址本身就是播放页，直接开无界面 webview 拦请求。
+        //      配置里的 parses 往往只有 json 型（type 1），对播放页一点用都没有 ——
+        //      xp天堂 那条线就是这么卡住的：探测说「返回的是网页」，解析接口全是 json。
+        if !p.ok, p.head.hasPrefix("<") {
+            let r = await ParseWebView.sniff(s)
+            if let cand = r.url, !cand.isEmpty {
+                notes.append("网页嗅探：\(short(cand))")
+                var candHeaders = headers
+                // 这类流认的是播放页的 Referer，不是站点根
+                candHeaders["Referer"] = s
+                let p2 = await probe(cand, headers: candHeaders)
+                notes.append("    · 探测：" + p2.describe)
+                if p2.ok {
+                    s = cand
+                    p = p2
+                    headers = candHeaders
+                    notes.append("采用网页嗅探到的地址")
+                }
+            } else {
+                notes.append("网页嗅探：没拦到媒体地址")
+                for n in r.notes { notes.append("    · " + n) }
+            }
+        }
+
+        // 4) 还是拿不到就按 parses 逐条试：type 1 走 json 接口，其余走 webview 嗅探
         if !p.ok {
             let attempts = await viaParses(s, parses: parses)
             for a in attempts {
