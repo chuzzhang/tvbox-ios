@@ -207,10 +207,12 @@ struct Site: Codable, Identifiable {
     /// 实际该怎么走。
     /// 配置里 type 标错的很多：标成 3（spider）但 api 是 http 的 CMS 直链。
     /// 这种按 CMS 走直接出内容，比硬塞进 JS 引擎靠谱。
+    /// 注意 `.py` 也要排除：它虽然不以 .js/.jar 结尾，但同样不是 CMS 接口。
     var effectiveType: Int {
         let a = api.trimmingCharacters(in: .whitespaces)
         let l = a.lowercased()
-        if isSpider, l.hasPrefix("http"), !l.contains(".js"), !l.contains(".jar") {
+        let scriptLike = l.contains(".js") || l.contains(".jar") || l.contains(".py")
+        if isSpider, l.hasPrefix("http"), !scriptLike {
             return 1
         }
         return type
@@ -227,23 +229,11 @@ struct Site: Codable, Identifiable {
         return a.contains("pyramid")
     }
 
-    /// 给站点列表做标注，一眼看出哪个能用
-    var routeLabel: String {
-        if isCMSRoute { return "CMS" }
-        let a = api.lowercased()
-        if a.contains(".js") { return "js 脚本" }
-        if a.contains(".jar") { return "jar 脚本" }
-        // api 直接是 .py 文件时，ext 往往是空的，不能只看 ext 判断
-        if a.hasSuffix(".py") || a.contains(".py?") { return "py 脚本" }
-        if isPyramid {
-            let e = Drpy.extText(ext).lowercased()
-            return e.hasSuffix(".py") ? "py 脚本" : "py 规则"
-        }
-        return "jar 内置"
-    }
-
-    /// 站点的实现方式。配置页那四个开关按这个分组，导入时只保留勾选的类别。
-    /// 判定顺序和 routeLabel 保持一致：先 CMS，再看 api 后缀，最后才落到 ext。
+    /// 站点类型。判定和展示都只走这一处，避免 routeLabel 和开关分组各判一套、互相打架。
+    ///
+    /// 曾经踩过的坑：ext 里 `contains(".js")` 就当 js 站点。csp_* 这类站点的 ext 是给
+    /// spider 的参数对象，里面 `"userScript": "./js/x.user.js"`、`"blockList": ["*.js*"]`
+    /// 都会命中，于是 18 个 jar 站点全被归成 js，关掉 jar 开关照样显示。
     var kind: SiteKind {
         if isCMSRoute { return .cms }
         let a = api.trimmingCharacters(in: .whitespaces).lowercased()
@@ -251,14 +241,39 @@ struct Site: Codable, Identifiable {
         if a.hasSuffix(".py") || a.contains(".py?") { return .python }
         if a.contains(".jar") { return .jar }
         if a.contains(".js") { return .js }
+
+        let raw = Drpy.extText(ext).trimmingCharacters(in: .whitespacesAndNewlines)
+        let e = raw.lowercased()
+
         if isPyramid {
-            return Drpy.extText(ext).lowercased().hasSuffix(".py") ? .python : .js
+            // pyramid：ext 是 python 源码算 python，其余（规则 JSON）算 js
+            let pySource = e.hasSuffix(".py") || (e.contains("import ") && e.contains("def "))
+            return pySource ? .python : .js
         }
-        let e = Drpy.extText(ext).lowercased()
-        if e.contains(".json") || e.contains(".js") { return .js }        // ext 是规则文件地址
-        if Drpy.looksLikeRule(Drpy.extText(ext)) { return .js }           // ext 是内联 JSON 规则
-        if e.contains("import ") && e.contains("def ") { return .python } // ext 是 python 源码
+
+        // ext 必须是「规则文件地址」或「内联规则」才算 js 站点。
+        // 不能对整段 ext 做 contains：参数对象里的字段会误命中。
+        if Self.extIsRuleURL(e) || Drpy.looksLikeRule(raw) { return .js }
+        if !e.hasPrefix("{"), e.contains("import "), e.contains("def ") { return .python }
         return .jar
+    }
+
+    /// ext 整体是不是一个规则文件地址（`./json/x.json`、`https://…/x.js`）
+    private static func extIsRuleURL(_ e: String) -> Bool {
+        let pathLike = e.hasPrefix("http") || e.hasPrefix("./") || e.hasPrefix("/") || e.hasPrefix("../")
+        guard pathLike else { return false }
+        let tail = e.split(separator: "?").first.map(String.init) ?? e
+        return tail.hasSuffix(".json") || tail.hasSuffix(".js")
+    }
+
+    /// 给站点列表做标注，一眼看出哪个能用
+    var routeLabel: String {
+        switch kind {
+        case .cms:    return "CMS"
+        case .js:     return "js 脚本"
+        case .python: return "py 脚本"
+        case .jar:    return "jar 内置"
+        }
     }
 
     /// 有没有可用入口：有 api，或至少给了 ext（脚本站点常把入口放在 ext 里）
