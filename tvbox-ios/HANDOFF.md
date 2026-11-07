@@ -1,6 +1,6 @@
 # TVBox iOS 交接文档
 
-版本：build 27（`CURRENT_PROJECT_VERSION: "27"`）  
+版本：build 28（`CURRENT_PROJECT_VERSION: "28"`）  
 最后更新：2026-11-07  
 项目根：`tvbox-ios/`
 
@@ -72,6 +72,7 @@ tvbox-ios/
 │   ├── drpy_lite.js               drpy 规则解释器（自写，语义对齐 cat.js）
 │   ├── cat.js                     drpy 官方库（规则脚本依赖它）
 │   ├── cheerio.min.js             dom 模拟层
+│   ├── compat.js                  新版 js spider 兼容层（console / req / cheerio / polyfill）
 │   ├── crypto-js.js               drpy 规则里的加密工具
 │   ├── parse_sniff.js             注入播放页的 hook（XHR / fetch / video.src）
 │   └── sniff_rules.json           嗅探过滤与排序规则（改这里不用重编）
@@ -85,7 +86,7 @@ tvbox-ios/
 │   ├── frida_hook_http.js         抓 jar 站点真实请求（okhttp / URLConnection）
 │   ├── frida_dump_wex.js          加固壳 dump（hook DexClassLoader / 内存扫 dex）
 │   └── make_icon.py               图标生成
-├── tests/                         6 个 node 单测，共 125 项
+├── tests/                         7 个 node 单测，共 154 项
 └── Assets.xcassets/
 ```
 
@@ -380,6 +381,40 @@ api.example.com                 采集接口示例
 - 全被滤掉时首页提示「当前勾选下没有站点」，不要说成「配置里没有站点」——
   这两种情况的处理方式完全不同。
 
+### 4.15 新版 js spider：ESM + cheerio + req()
+
+`api` 指向 `.js` 的站点有两种形态，写法完全不同：
+
+| 形态 | 特征 | 处理 |
+|---|---|---|
+| 老 drpy / cat 系 | `var rule = {…}`，函数名 `homeContent/categoryContent` | `drpy_lite.js` 解释器 |
+| **新版 js spider** | `import cheerio from 'assets://…'`、`await req(url).content`、`export default {…}`，函数名 `home/category/detail/search/play` | `compat.js` + `JSSpider` 兜底入口 |
+
+新版那类在 build 27 之前是「第 1 段脚本执行期间报错」——`evaluateScript` 只吃脚本不吃模块，
+第 1 行 `import` 就 SyntaxError。现在四件事一起补上：
+
+- **剥 ESM**（`JSSpider.stripESM`）：删 `import …;`，`export default` → `var __default_export__ = …`，
+  `export {a, b};` 整行删掉。函数声明在脚本作用域里本来就是全局的，入口照旧能按名字取到。
+- **`compat.js`**（`Resources/compat.js`）：`console`、`req()`、`cheerio`、`__tb_watch`、
+  以及 iOS 15 缺的 `Object.hasOwn` / `replaceAll` / `Array.at` / `findLast` / `structuredClone`。
+- **`req()` 的 content 必须是 thenable String**：两种写法在同一批脚本里都有
+  —— `await req(u).content` 和 `(await req(u)).content`。只给 Promise 的话，后一种拿到的是
+  Promise 对象，后面 `.length` / `atob` / `.substring` 全崩。所以包成 `new String(text)` 再挂 `then`。
+- **异步入口抽头**（`JSSpider.unwrap`）：`fn.call` 拿到的是 Promise，JSCore 的微任务要反复
+  进 JS 才抽得干。`__tb_watch(p)` 把结果写进 `__tb_state/__tb_value`，原生侧轮询
+  `evaluateScript("0")` 直到 state 非 0（上限 90 秒）。
+- **返回值容错**：这类脚本 `return JSON.stringify({list:[…]})`，`jsonDict` 现在也认字符串；
+  入口名兜底 `home/category/detail/search`，detail 先用字符串 id 试、再用数组试。
+
+cheerio 用 `compat.js` 里的最小实现（`$(sel)` / `.find` / `.text` / `.attr` / `.each` /
+`.toArray` / `.first` / `.eq` / `.length`），选择器落到原生 SwiftSoup。仓库里那份
+`Resources/cheerio.min.js` 是 ESM 构建（`export{…}` 结尾），进 JSCore 还得再转换一层，
+暂时不用它。
+
+**错误信息也要能查**：`exceptionHandler` 现在取 `message` + `line` + `column` 拼成
+「JS 错误：… [第 N 行 第 M 列]」；`errorText` 会跳过 `[日志]` / `[第 N 段…]` / `[兼容层]`
+这些我们自己打的标记，否则界面上只剩一句没有信息量的标记。
+
 ## 5. 持久化
 
 全部 `UserDefaults`，没有 CoreData。
@@ -447,14 +482,14 @@ cd build && zip -qry TVBox.ipa Payload
 
 ### 发版号
 
-改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 27），commit 后 CI 出新包并**自动发 Release**：
+改 `project.yml` 的 `CURRENT_PROJECT_VERSION`（现在是 28），commit 后 CI 出新包并**自动发 Release**：
 
 ```
-tag        build27
-标题       TVBox 1.0.27 (build 27)
-资产       TVBox-1.0.27.ipa（未签名）+ TVBox-1.0.27.ipa.sha256
+tag        build28
+标题       TVBox 1.0.28 (build 28)
+资产       TVBox-1.0.28.ipa（未签名）+ TVBox-1.0.28.ipa.sha256
 正文       自签说明 + 包信息 + 本次更新（上个 tag 以来的提交）
-安装后显示 版本 1.0.27（27）
+安装后显示 版本 1.0.28（28）
 ```
 
 正文里的更新列表是自己用 `git log $PREV..HEAD` 生成的，**不要换回 `--generate-notes`** ——
@@ -462,7 +497,7 @@ tag        build27
 **也不要在正文里放 compare 链接**，release 页只要标题、包信息、更新列表。
 checkout 必须 `fetch-depth: 0`，浅克隆里 `git describe --tags` 取不到上一个版本。
 
-`1.0.27` = `MARKETING_VERSION` 去掉末位（1.0）+ `CURRENT_PROJECT_VERSION`（27），由 workflow 的
+`1.0.28` = `MARKETING_VERSION` 去掉末位（1.0）+ `CURRENT_PROJECT_VERSION`（28），由 workflow 的
 「读版本号」步骤算出来，再用 `xcodebuild MARKETING_VERSION=…` 覆盖进包 —— 所以设置里显示的
 版本号跟着每次构建走，不会永远停在 `1.0.0`。改版号不用动 workflow。
 
@@ -502,7 +537,7 @@ cd tvbox-ios
 for f in tests/*.test.js; do node "$f"; done
 ```
 
-125 项，覆盖：
+154 项，覆盖：
 
 | 文件 | 项数 | 覆盖点 |
 |---|---|---|
@@ -512,6 +547,7 @@ for f in tests/*.test.js; do node "$f"; done
 | `drpy_netfail.test.js` | 10 | 非 2xx 不解析、错误文案 |
 | `drpy_pyramid.test.js` | 18 | pyramid 规则语义、搜索编码 |
 | `parse_webview.test.js` | 53 | sniff_rules 规则、hook 脚本（vm 假 DOM 跑通 XHR/确认升级）、Swift 接线 |
+| `js_compat.test.js` | 29 | compat.js：console / req thenable / cheerio shim / Promise 抽头 / polyfill |
 
 测试用 cheerio 模拟 iOS 端的 `pdfh` / `pdfa` / `request`，语义和 `JSSpider.swift:562-621` 对齐。**改了桥的语义，同步改测试里的模拟层**，否则测试会骗人。
 

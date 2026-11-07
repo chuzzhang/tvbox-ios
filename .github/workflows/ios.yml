@@ -83,7 +83,7 @@ jobs:
           node -v
           ran=""
           missing=""
-          for f in drpy_lite.test.js drpy_jsrule.test.js drpy_classparse.test.js drpy_netfail.test.js drpy_pyramid.test.js parse_webview.test.js; do
+          for f in drpy_lite.test.js drpy_jsrule.test.js drpy_classparse.test.js drpy_netfail.test.js drpy_pyramid.test.js parse_webview.test.js js_compat.test.js; do
             if [ -f "tests/$f" ]; then
               echo "→ tests/$f"
               node "tests/$f"

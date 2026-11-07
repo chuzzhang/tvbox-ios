@@ -57,9 +57,13 @@ final class JSSpider {
     private(set) var ruleTitle: String
     private var rule: JSValue? = nil
 
-    /// 站点脚本自身的错误（公共库的告警不算）
+    /// 站点脚本自身的错误。
+    /// 公共库告警、以及我们自己插的「第 N 段报错」标记都要滤掉 ——
+    /// 否则界面上只剩一句没信息量的标记，真正的原因被挡在后面。
     var errorText: String? {
-        box.lines.last { !$0.hasPrefix("[公共库]") }
+        box.lines.last {
+            !$0.hasPrefix("[公共库]") && !$0.hasPrefix("[第 ") && !$0.hasPrefix("[兼容层")
+        }
     }
     var allErrors: [String] { box.lines }
 
@@ -72,13 +76,21 @@ final class JSSpider {
 
         let b = box
         context.exceptionHandler = { _, exc in
-            var msg = "JS 异常"
-            if let e = exc, !e.isUndefined, let s = e.toString(), !s.isEmpty { msg = s }
-            b.lines.append(msg)
+            b.lines.append(JSSpider.describeJS(exc))
         }
 
         installBridges()
         injectGlobals(site: site)
+
+        // 新版 js spider 依赖 cheerio / req / console，JSCore 里一个都没有。
+        // 兼容层必须在站点脚本之前跑，否则第 1 行 import 就语法错。
+        if let compat = JSSpider.bundledCompat() {
+            let before = b.lines.count
+            context.evaluateScript(compat)
+            if b.lines.count > before {
+                b.lines.append("[兼容层 compat.js 执行失败]")
+            }
+        }
 
         // cat.js 这类公共库先跑；它的告警不该算成站点不可用
         if let lib, !lib.isEmpty {
@@ -93,7 +105,7 @@ final class JSSpider {
 
         for (i, code) in scripts.enumerated() where !code.isEmpty {
             let before = b.lines.count
-            context.evaluateScript(code)
+            context.evaluateScript(JSSpider.stripESM(code))
             if b.lines.count > before {
                 b.lines.append("[第 \(i + 1) 段脚本执行期间报错，继续加载后续脚本]")
             }
@@ -105,7 +117,7 @@ final class JSSpider {
                 ruleTitle = t
             }
             if let initFn = context.objectForKeyedSubscript("init"), !initFn.isUndefined {
-                initFn.call(withArguments: [r])
+                _ = unwrap(initFn.call(withArguments: [r]))
             }
         }
     }
@@ -116,7 +128,7 @@ final class JSSpider {
         var out: [VCategory] = []
 
         if let fn = ctx.objectForKeyedSubscript("homeContent"), !fn.isUndefined {
-            let r = fn.call(withArguments: [emptyObj])
+            let r = unwrap(fn.call(withArguments: [emptyObj]))
             if let dict = jsonDict(r), let arr = dict["class"] as? [[String: Any]] {
                 out = arr.compactMap { d in
                     guard let tid = str(d["type_id"]), let name = str(d["type_name"]) else { return nil }
@@ -127,7 +139,7 @@ final class JSSpider {
 
         // 老接口 home() + rule.class_parse
         if out.isEmpty, let fn = ctx.objectForKeyedSubscript("home"), !fn.isUndefined {
-            let r = fn.call(withArguments: [])
+            let r = unwrap(fn.call(withArguments: []))
             if let dict = jsonDict(r), let arr = dict["class"] as? [[String: Any]] {
                 out = arr.compactMap { d in
                     guard let tid = str(d["type_id"]), let name = str(d["type_name"]) else { return nil }
@@ -143,8 +155,18 @@ final class JSSpider {
 
     func category(tid: String, page: Int) -> (items: [VItem], pageCount: Int) {
         if let fn = ctx.objectForKeyedSubscript("categoryContent"), !fn.isUndefined {
-            let r = fn.call(withArguments: [tid, page, false, emptyObj])
+            let r = unwrap(fn.call(withArguments: [tid, page, false, emptyObj]))
             if let dict = jsonDict(r) {
+                let items = parseItems(dict["list"])
+                if !items.isEmpty {
+                    let pc = (dict["pagecount"] as? NSNumber)?.intValue ?? (page + 1)
+                    return (items, max(pc, page))
+                }
+            }
+        }
+        // 新版接口：category(tid, pg, filter, extend)
+        if let fn = ctx.objectForKeyedSubscript("category"), !fn.isUndefined {
+            if let dict = jsonDict(unwrap(fn.call(withArguments: [tid, page, false, emptyObj]))) {
                 let items = parseItems(dict["list"])
                 if !items.isEmpty {
                     let pc = (dict["pagecount"] as? NSNumber)?.intValue ?? (page + 1)
@@ -156,16 +178,33 @@ final class JSSpider {
     }
 
     func detail(id: String) -> VDetail? {
-        guard let fn = ctx.objectForKeyedSubscript("detailContent"), !fn.isUndefined else { return nil }
-        let r = fn.call(withArguments: [[id]])
-        guard let dict = jsonDict(r), let list = dict["list"] as? [[String: Any]], let first = list.first else { return nil }
+        if let fn = ctx.objectForKeyedSubscript("detailContent"), !fn.isUndefined {
+            if let d = firstDetail(jsonDict(unwrap(fn.call(withArguments: [[id]])))) { return d }
+        }
+        // 新版接口：detail(id)，id 是字符串（脚本里直接拼到 baseUrl 后面）
+        if let fn = ctx.objectForKeyedSubscript("detail"), !fn.isUndefined {
+            if let d = firstDetail(jsonDict(unwrap(fn.call(withArguments: [id])))) { return d }
+            if let d = firstDetail(jsonDict(unwrap(fn.call(withArguments: [[id]])))) { return d }
+        }
+        return nil
+    }
+
+    private func firstDetail(_ dict: [String: Any]?) -> VDetail? {
+        guard let dict, let list = dict["list"] as? [[String: Any]], let first = list.first else { return nil }
         return parseDetail(first)
     }
 
     func search(key: String, page: Int = 1) -> [VItem] {
         if let fn = ctx.objectForKeyedSubscript("searchContent"), !fn.isUndefined {
-            let r = fn.call(withArguments: [key, true, page])
+            let r = unwrap(fn.call(withArguments: [key, true, page]))
             if let dict = jsonDict(r) {
+                let items = parseItems(dict["list"])
+                if !items.isEmpty { return items }
+            }
+        }
+        // 新版接口：search(key, quick, page)
+        if let fn = ctx.objectForKeyedSubscript("search"), !fn.isUndefined {
+            if let dict = jsonDict(unwrap(fn.call(withArguments: [key, true, page]))) {
                 let items = parseItems(dict["list"])
                 if !items.isEmpty { return items }
             }
@@ -386,7 +425,15 @@ final class JSSpider {
     }
 
     private func jsonDict(_ v: JSValue?) -> [String: Any]? {
-        guard let v, !v.isUndefined, !v.isNull, v.isObject else { return nil }
+        guard let v, !v.isUndefined, !v.isNull else { return nil }
+        // 新版 js spider 习惯 `return JSON.stringify({list:[…]})`，拿到的是字符串。
+        // 只认 isObject 的话这类脚本永远是「跑起来了但没内容」。
+        if v.isString, let s = v.toString(), s.hasPrefix("{"),
+           let d = s.data(using: .utf8),
+           let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
+            return o
+        }
+        guard v.isObject else { return nil }
         // 脚本返回对象时 toString 就是 JSON；返回数组时套一层没意义，交给 toObject
         if let s = v.toString(), s.hasPrefix("{"), let d = s.data(using: .utf8),
            let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
@@ -435,10 +482,168 @@ final class JSSpider {
         return nil
     }
 
+    // MARK: - 兼容层 / ESM / 异步
+
+    static func bundledCompat() -> String? {
+        guard let u = Bundle.main.url(forResource: "compat", withExtension: "js") else { return nil }
+        return try? String(contentsOf: u, encoding: .utf8)
+    }
+
+    /// 新版站点脚本是 ES Module：`import cheerio from 'assets://…'` + `export default {…}`。
+    /// `evaluateScript` 只吃脚本不吃模块，原样 eval 第 1 行就 SyntaxError（
+    /// 表现就是「第 1 段脚本执行期间报错」，连站点是谁都看不出来）。
+    /// 这里删掉 import（cheerio 由 compat.js 提供全局），export 降级成普通变量。
+    static func stripESM(_ src: String) -> String {
+        guard src.contains("import ") || src.contains("export ") else { return src }
+        var out = src
+        let o: String.CompareOptions = [.regularExpression]
+        out = out.replacingOccurrences(of: "(?m)^[ \\t]*import[ \\t]+[^;\\n]*;?[ \\t]*$", with: "", options: o)
+        out = out.replacingOccurrences(of: "(?m)^[ \\t]*export[ \\t]+default[ \\t]+", with: "var __default_export__ = ", options: o)
+        out = out.replacingOccurrences(of: "(?m)^[ \\t]*export[ \\t]+(?=(const|let|var|function|class|async))", with: "", options: o)
+        out = out.replacingOccurrences(of: "(?m)^[ \\t]*export[ \\t]*\\{[^}]*\\}[ \\t]*;?[ \\t]*$", with: "", options: o)
+        return out
+    }
+
+    /// 异常对象转一句能行动的说明：message + 行号 + 来源。
+    /// 只打 `e.toString()` 的话，SyntaxError 只会得到 "SyntaxError"，没有行号根本没法查。
+    static func describeJS(_ exc: JSValue?) -> String {
+        guard let e = exc, !e.isUndefined, !e.isNull else { return "JS 异常（没有异常对象）" }
+        var head = ""
+        if let m = e.objectForKeyedSubscript("message")?.toString(), !m.isEmpty, m != "undefined" {
+            head = m
+            if let n = e.objectForKeyedSubscript("name")?.toString(), !n.isEmpty, n != "Error" {
+                head = n + ": " + m
+            }
+        } else if let t = e.toString(), !t.isEmpty {
+            head = t
+        }
+        var loc = ""
+        if let line = e.objectForKeyedSubscript("line")?.toString(), !line.isEmpty, line != "0" {
+            loc = "第 \(line) 行"
+            if let col = e.objectForKeyedSubscript("column")?.toString(), !col.isEmpty, col != "0" {
+                loc += " 第 \(col) 列"
+            }
+            if let src = e.objectForKeyedSubscript("sourceURL")?.toString(), !src.isEmpty {
+                loc += "（\(src)）"
+            }
+        }
+        if head.isEmpty { head = "未知错误" }
+        return loc.isEmpty ? "JS 错误：" + head : "JS 错误：" + head + "  [" + loc + "]"
+    }
+
+    /// 站点脚本基本都是 async function。JSCore 里 `fn.call` 拿到的是 Promise，
+    /// 微任务要反复进 JS 才会被抽干，所以这里轮询 __tb_state。
+    /// 原生 HTTP 是同步的，实际一轮就够；留 90 秒上限是防脚本里 await 了别的东西。
+    func unwrap(_ v: JSValue?, timeout: TimeInterval = 90) -> JSValue? {
+        guard let v, !v.isUndefined, !v.isNull else { return v }
+        let then = v.objectForKeyedSubscript("then")
+        guard let then, !then.isUndefined, then.isObject else { return v }
+
+        ctx.setObject(v, forKeyedSubscript: "__tb_pending" as NSString)
+        ctx.evaluateScript("__tb_watch(__tb_pending)")
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if (ctx.objectForKeyedSubscript("__tb_state")?.toInt32() ?? 0) != 0 { break }
+            ctx.evaluateScript("0")          // 触发一次微任务抽干
+            Thread.sleep(forTimeInterval: 0.002)
+        }
+        let st = ctx.objectForKeyedSubscript("__tb_state")?.toInt32() ?? 0
+        if st == 1 { return ctx.objectForKeyedSubscript("__tb_value") }
+        if st == 2 {
+            box.lines.append(ctx.objectForKeyedSubscript("__tb_error")?.toString() ?? "异步调用失败")
+            return nil
+        }
+        box.lines.append("异步入口 \(Int(timeout)) 秒没有返回（Promise 一直 pending）")
+        return nil
+    }
+
+    /// req(url, {method, headers, body, buffer}) 的落地实现。
+    /// 同步阻塞（信号量等 URLSession），调用方必须在后台队列上。
+    static func syncRequest(_ urlString: String, _ headersJSON: String,
+                            _ method: String, _ body: String, _ asBase64: Bool) -> String {
+        var headers: [String: String] = [:]
+        if let d = headersJSON.data(using: .utf8),
+           let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] {
+            for (k, v) in o { headers[k] = "\(v)" }
+        }
+        guard let url = Net.makeURL(urlString) else {
+            HTTPNote.shared.set(urlString, "地址无效")
+            return ""
+        }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 15
+        req.httpMethod = method.isEmpty ? "GET" : method.uppercased()
+        req.setValue(Net.shared.defaultUA, forHTTPHeaderField: "User-Agent")
+        for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
+        if !body.isEmpty { req.httpBody = body.data(using: .utf8) }
+
+        let sem = DispatchSemaphore(value: 0)
+        let box2 = ResultBox()
+        var raw = Data()
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = 15
+        let session = URLSession(configuration: cfg, delegate: TrustAllDelegate(), delegateQueue: nil)
+        session.dataTask(with: req) { data, resp, err in
+            defer { sem.signal() }
+            if let err { box2.note = JSSpider.describe(err); return }
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            if code != 0, !(200...299).contains(code) { box2.note = "HTTP \(code)"; return }
+            guard let data, !data.isEmpty else { box2.note = "HTTP \(code) 但内容为空"; return }
+            raw = data
+            if asBase64 { return }
+            if let t = String(data: data, encoding: .utf8) { box2.text = t }
+            else {
+                let gb = CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue))
+                box2.text = String(data: data, encoding: String.Encoding(rawValue: gb)) ?? ""
+            }
+        }.resume()
+        _ = sem.wait(timeout: .now() + 20)
+        session.invalidateAndCancel()
+        HTTPNote.shared.set(urlString, box2.text.isEmpty && box2.note.isEmpty ? "" : box2.note)
+        if asBase64 { return raw.base64EncodedString() }
+        return box2.text
+    }
+
+    // MARK: - HTML 片段（cheerio shim 的原语）
+
+    static func fragmentRoot(_ html: String) -> Element? {
+        guard let doc = try? SwiftSoup.parseBodyFragment(html) else { return nil }
+        return doc.body()?.children().first()
+    }
+
+    static func fragmentText(_ html: String) -> String {
+        guard let el = fragmentRoot(html) else { return "" }
+        return (try? el.text()) ?? ""
+    }
+
+    static func fragmentHtml(_ html: String) -> String {
+        guard let el = fragmentRoot(html) else { return "" }
+        return (try? el.html()) ?? ""
+    }
+
+    static func fragmentAttr(_ html: String, _ name: String) -> String {
+        guard let el = fragmentRoot(html) else { return "" }
+        return (try? el.attr(name)) ?? ""
+    }
+
+    /// `$(sel)` / `node.find(sel)`：返回命中的 outerHTML 数组。
+    /// 传进来的是整页就从 document 选，传进来的是单个节点（outerHTML）就只在该节点下面选。
+    static func queryAll(_ html: String, _ selector: String) -> [String] {
+        let sel = selector.trimmingCharacters(in: .whitespaces)
+        guard !sel.isEmpty else { return [] }
+        let lower = html.lowercased()
+        let wholePage = lower.hasPrefix("<!doctype") || lower.hasPrefix("<html") || lower.contains("<body")
+        guard let doc = try? SwiftSoup.parse(html) else { return [] }
+        let scope: Element = wholePage ? doc : ((doc.body()?.children().first()) ?? doc)
+        guard let els = try? scope.select(sel) else { return [] }
+        return els.map { (try? $0.outerHtml()) ?? "" }
+    }
+
     // MARK: - 原生桥
 
     private func installBridges() {
         let ctx = self.ctx
+        let b = self.box
 
         let request: @convention(block) (String, JSValue?) -> String = { url, opt in
             var headers: [String: String] = [:]
@@ -475,6 +680,36 @@ final class JSSpider {
 
         let log: @convention(block) (String) -> Void = { _ in }
         ctx.setObject(unsafeBitCast(log, to: AnyObject.self), forKeyedSubscript: "log" as NSString)
+
+        // ---- 新版 js spider 需要的那几个 ----
+        // console.* 落到日志里，前缀标清楚，免得被 errorText 当成站点错误
+        let logLine: @convention(block) (String) -> Void = { line in
+            if b.lines.count < 400 { b.lines.append("[日志] " + line) }
+        }
+        ctx.setObject(unsafeBitCast(logLine, to: AnyObject.self), forKeyedSubscript: "__log" as NSString)
+
+        // req(url, {method, headers, body, buffer})
+        let reqSync: @convention(block) (String, String, String, String, Int) -> String = { url, hjson, method, body, b64 in
+            JSSpider.syncRequest(url, hjson, method, body, b64 != 0)
+        }
+        ctx.setObject(unsafeBitCast(reqSync, to: AnyObject.self), forKeyedSubscript: "__reqSync" as NSString)
+
+        // cheerio 的最小实现：选择器交给 SwiftSoup，返回 outerHTML 数组
+        let selAll: @convention(block) (String, String) -> String = { html, q in
+            let arr = JSSpider.queryAll(html, q)
+            guard let d = try? JSONSerialization.data(withJSONObject: arr) else { return "[]" }
+            return String(data: d, encoding: .utf8) ?? "[]"
+        }
+        ctx.setObject(unsafeBitCast(selAll, to: AnyObject.self), forKeyedSubscript: "__sel" as NSString)
+
+        let fragText: @convention(block) (String) -> String = { html in JSSpider.fragmentText(html) }
+        ctx.setObject(unsafeBitCast(fragText, to: AnyObject.self), forKeyedSubscript: "__text" as NSString)
+
+        let fragHtml: @convention(block) (String) -> String = { html in JSSpider.fragmentHtml(html) }
+        ctx.setObject(unsafeBitCast(fragHtml, to: AnyObject.self), forKeyedSubscript: "__innerHtml" as NSString)
+
+        let fragAttr: @convention(block) (String, String) -> String = { html, n in JSSpider.fragmentAttr(html, n) }
+        ctx.setObject(unsafeBitCast(fragAttr, to: AnyObject.self), forKeyedSubscript: "__attr" as NSString)
     }
 
     /// 同步 HTTP，供 JS 直接拿字符串。
